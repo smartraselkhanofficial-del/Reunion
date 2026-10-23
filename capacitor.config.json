@@ -1,6 +1,6 @@
-
 {
-  "appId": "com.reunion.app",
-  "appName": "Reunion 2027",
-  "webDir": "www"
+  "appId": "org.sandikona.reunion2027",
+  "appName": "পুনর্মিলনী ২০২৭",
+  "webDir": "dist",
+  "bundledWebRuntime": false
 }
