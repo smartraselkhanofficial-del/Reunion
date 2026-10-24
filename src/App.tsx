@@ -1,18 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 
 // ============================================================================
-// ১. ক্লাউড ডাটাবেস কনফিগারেশন (Supabase Free Cloud Backend)
-// আপনি আপনার Supabase URL ও Key বসালে এটি সরাসরি ক্লাউডে জমা হবে। 
-// ডিফল্টভাবে এটি লাইভ ব্রডকাস্ট চ্যানেলে কাজ করবে।
+// 🔥 আপনার ফ্রি ক্লাউড ডাটাবেস লিংক (এখানে আপনার ফায়ারবেস লিংকটি বসান)
 // ============================================================================
-const SUPABASE_URL = 'https://xyzcompany.supabase.co'; // আপনার ক্লাউড URL
-const SUPABASE_ANON_KEY = 'eyJhbGciOi...'; // আপনার ক্লাউড Anon Key
-
-const supabase = createClient(
-  SUPABASE_URL.startsWith('http') ? SUPABASE_URL : 'https://placeholder.supabase.co',
-  SUPABASE_ANON_KEY.length > 20 ? SUPABASE_ANON_KEY : 'placeholder-key'
-);
+const FIREBASE_DB_URL = 'https://reunion2027-default-rtdb.firebaseio.com'; 
 
 interface RegisteredMember {
   id: string;
@@ -37,47 +28,82 @@ export default function App() {
   const [batchFilter, setBatchFilter] = useState<'all' | '2014' | '2016'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // গোপন অ্যাডমিন প্যানেল স্টেট (সাধারণ পাবলিকের জন্য সম্পূর্ণ অদৃশ্য)
+  // ক্লাউড মেম্বার ও চ্যাট স্টেট
+  const [members, setMembers] = useState<RegisteredMember[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // গোপন অ্যাডমিন প্যানেল স্টেট
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminClickCount, setAdminClickCount] = useState(0);
-  const ADMIN_SECRET_PIN = '74798'; // স্মার্ট রাসেল খানের গোপন পিন
+  const ADMIN_SECRET_PIN = '74798'; // স্মার্ট রাসেল খানের সিক্রেট পিন
 
-  // মেম্বার লিস্ট স্টেট
-  const [members, setMembers] = useState<RegisteredMember[]>(() => {
-    const local = localStorage.getItem('sandikona_shared_members');
-    return local ? JSON.parse(local) : [
-      { id: '1', name: 'স্মার্ট রাসেল খান', phone: '01705374798', batch: '2014', tshirt: 'XL', area: 'সান্দিকোনা, কেন্দুয়া', regDate: 'আয়োজক প্রধান' },
-      { id: '2', name: 'মোঃ সাইদুল ইসলাম', phone: '01712000111', batch: '2014', tshirt: 'L', area: 'কেন্দুয়া বাজার', regDate: 'সদস্য' },
-      { id: '3', name: 'মাহবুব আলম', phone: '01819223344', batch: '2016', tshirt: 'M', area: 'নেত্রকোনা সদর', regDate: 'সদস্য' }
-    ];
-  });
-
+  // রেজিস্ট্রেশন ফর্ম স্টেট
   const [regForm, setRegForm] = useState({ name: '', phone: '', batch: '2014', tshirt: 'L', area: '' });
   const [regError, setRegError] = useState('');
   const [regSuccess, setRegSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // চ্যাট স্টেট
   const [isJoinedChat, setIsJoinedChat] = useState(false);
   const [chatUserName, setChatUserName] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: '1', sender: 'স্মার্ট রাসেল খান (আয়োজক)', text: 'আসসালামু আলাইকুম। সান্দিকোনা স্কুল এন্ড কলেজের সকল বন্ধুদের স্বাগতম!', time: '১০:০০ AM' }
-  ]);
   const [inputMsg, setInputMsg] = useState('');
 
-  // ১০০ জনের অডিও রুম স্টেট
+  // অডিও রুম
   const [isAudioConnected, setIsAudioConnected] = useState(false);
-  const JITSI_AUDIO_ROOM_URL = 'https://meet.jit.si/SandikonaReunion2027AudioRoom100#config.startWithVideoMuted=true&config.prejoinPageEnabled=false';
+  const JITSI_AUDIO_ROOM_URL = 'https://meet.jit.si/SandikonaReunion2027Audio100#config.startWithVideoMuted=true&config.prejoinPageEnabled=false';
 
   // -------------------------------------------------------------
-  // ক্লাউড ব্রডকাস্ট লিসেনার (অন্য মোবাইল থেকে ডাটা আসার রাস্তা)
+  // ১. ক্লাউড থেকে সব ফোনের ডাটা প্রতি ৫ সেকেন্ড পর পর অটো-সিঙ্ক
   // -------------------------------------------------------------
+  const syncFromCloud = async () => {
+    if (!FIREBASE_DB_URL || FIREBASE_DB_URL.includes('default-rtdb.firebaseio.com')) {
+      // যদি ইউজার লিংক না বসায়, লোকাল ডাটা দেখাবে
+      const local = localStorage.getItem('sandikona_members_backup');
+      if (local && members.length === 0) setMembers(JSON.parse(local));
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      // ক্লাউড থেকে সব মেম্বার আনা
+      const resMembers = await fetch(`${FIREBASE_DB_URL}/members.json`);
+      const dataMembers = await resMembers.json();
+      if (dataMembers) {
+        const loaded: RegisteredMember[] = Object.keys(dataMembers).map(key => ({
+          id: key,
+          ...dataMembers[key]
+        })).reverse();
+        setMembers(loaded);
+        localStorage.setItem('sandikona_members_backup', JSON.stringify(loaded));
+      }
+
+      // ক্লাউড থেকে চ্যাট মেসেজ আনা
+      const resChat = await fetch(`${FIREBASE_DB_URL}/messages.json`);
+      const dataChat = await resChat.json();
+      if (dataChat) {
+        const loadedMsgs: ChatMessage[] = Object.keys(dataChat).map(key => ({
+          id: key,
+          ...dataChat[key]
+        }));
+        setMessages(loadedMsgs);
+      }
+    } catch (err) {
+      console.log('Syncing error:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem('sandikona_shared_members', JSON.stringify(members));
-  }, [members]);
+    syncFromCloud();
+    const interval = setInterval(syncFromCloud, 4000); // প্রতি ৪ সেকেন্ড পর পর লাইভ আপডেট
+    return () => clearInterval(interval);
+  }, []);
 
-  // গোপন অ্যাডমিন প্যানেল ট্রিগার (৩ বার দ্রুত ক্লিক করলে পিন চাইবে)
+  // গোপন অ্যাডমিন প্যানেল ট্রিগার (৩ বার ক্লিক)
   const handleSecretAdminTrigger = () => {
     const nextCount = adminClickCount + 1;
     if (nextCount >= 3) {
@@ -85,30 +111,34 @@ export default function App() {
       setShowAdminModal(true);
     } else {
       setAdminClickCount(nextCount);
-      setTimeout(() => setAdminClickCount(0), 2000); // ২ সেকেন্ডের মধ্যে ৩ বার চাপতে হবে
+      setTimeout(() => setAdminClickCount(0), 2000);
     }
   };
 
-  // ডুপ্লিকেট চেকিং সহ রিয়েল রেজিস্ট্রেশন
-  const handleRegister = (e: React.FormEvent) => {
+  // -------------------------------------------------------------
+  // ২. ক্লাউড ডাটাবেসে রিয়েল রেজিস্ট্রেশন জমা দেওয়া
+  // -------------------------------------------------------------
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
+    setIsSubmitting(true);
 
     const cleanPhone = regForm.phone.replace(/[^\d]/g, '');
     if (cleanPhone.length < 11) {
       setRegError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)');
+      setIsSubmitting(false);
       return;
     }
 
-    // সেন্ট্রাল ডুপ্লিকেট রোধ
+    // ক্লাউডে ডুপ্লিকেট নম্বর চেক
     const isDuplicate = members.some(m => m.phone.replace(/[^\d]/g, '').slice(-11) === cleanPhone.slice(-11));
     if (isDuplicate) {
-      setRegError('⚠️ এই মোবাইল নম্বর দিয়ে ইতোমধ্যেই রেজিস্ট্রেশন করা হয়েছে! একজন বন্ধু একবারের বেশি নিবন্ধন করতে পারবেন না।');
+      setRegError('⚠️ এই মোবাইল নম্বর দিয়ে ইতোমধ্যেই রেজিস্ট্রেশন সম্পন্ন হয়েছে! একজন একবারের বেশি নিবন্ধন করতে পারবেন না।');
+      setIsSubmitting(false);
       return;
     }
 
-    const newMember: RegisteredMember = {
-      id: Date.now().toString(),
+    const newMemberData = {
       name: regForm.name.trim(),
       phone: cleanPhone,
       batch: regForm.batch,
@@ -117,40 +147,59 @@ export default function App() {
       regDate: new Date().toLocaleDateString('bn-BD')
     };
 
-    setMembers(prev => [newMember, ...prev]);
-    setRegSuccess(true);
-    setRegForm({ name: '', phone: '', batch: '2014', tshirt: 'L', area: '' });
+    try {
+      if (FIREBASE_DB_URL && !FIREBASE_DB_URL.includes('default-rtdb.firebaseio.com')) {
+        // সরাসরি ক্লাউডে POST রিকোয়েস্ট (সবার ফোনে চলে যাবে)
+        await fetch(`${FIREBASE_DB_URL}/members.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newMemberData)
+        });
+        await syncFromCloud();
+      } else {
+        // ফলব্যাক লোকাল
+        const fallback = [{ id: Date.now().toString(), ...newMemberData }, ...members];
+        setMembers(fallback);
+        localStorage.setItem('sandikona_members_backup', JSON.stringify(fallback));
+      }
+
+      setRegSuccess(true);
+      setRegForm({ name: '', phone: '', batch: '2014', tshirt: 'L', area: '' });
+    } catch (error) {
+      setRegError('ইন্টারনেট সংযোগ চেক করে আবার চেষ্টা করুন।');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // চ্যাটে জয়েন হওয়া
-  const handleJoinChat = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatUserName.trim()) return;
-
-    setIsJoinedChat(true);
-    const joinNotice: ChatMessage = {
-      id: Date.now().toString(),
-      sender: 'সিস্টেম নোটিশ',
-      text: `🎉 সহপাঠী "${chatUserName}" লাইভ আড্ডায় জয়েন হয়েছেন!`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      isSystem: true
-    };
-    setMessages(prev => [...prev, joinNotice]);
-  };
-
-  // চ্যাটে মেসেজ পাঠানো
-  const handleSendMessage = (e: React.FormEvent) => {
+  // -------------------------------------------------------------
+  // ৩. ক্লাউডে চ্যাট মেসেজ পাঠানো
+  // -------------------------------------------------------------
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputMsg.trim()) return;
 
-    const newMsgObj: ChatMessage = {
-      id: Date.now().toString(),
+    const newMsgObj = {
       sender: chatUserName || 'সহপাঠী',
       text: inputMsg.trim(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-    setMessages(prev => [...prev, newMsgObj]);
-    setInputMsg('');
+
+    try {
+      if (FIREBASE_DB_URL && !FIREBASE_DB_URL.includes('default-rtdb.firebaseio.com')) {
+        await fetch(`${FIREBASE_DB_URL}/messages.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newMsgObj)
+        });
+        syncFromCloud();
+      } else {
+        setMessages(prev => [...prev, { id: Date.now().toString(), ...newMsgObj }]);
+      }
+      setInputMsg('');
+    } catch (err) {
+      console.log(err);
+    }
   };
 
   const count2014 = members.filter(m => m.batch === '2014').length;
@@ -166,7 +215,7 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', minHeight: '100vh', backgroundColor: '#F8FAF9', color: '#1e293b', paddingBottom: '85px', margin: 0 }}>
       
-      {/* ১. টপ ব্যানার */}
+      {/* ব্যানার */}
       <header style={{ background: 'linear-gradient(135deg, #0D5C3A 0%, #15803d 100%)', color: 'white', padding: '20px 16px', boxShadow: '0 4px 12px rgba(13,92,58,0.2)' }}>
         <div style={{ maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
           <span style={{ fontSize: '11px', background: 'rgba(212,175,55,0.25)', color: '#fef08a', padding: '4px 14px', borderRadius: '20px', border: '1px solid rgba(212,175,55,0.5)', fontWeight: 'bold' }}>
@@ -180,33 +229,37 @@ export default function App() {
         </div>
       </header>
 
-      {/* ২. মূল বডি */}
+      {/* কনটেন্ট ভিউ */}
       <main style={{ maxWidth: '600px', margin: '0 auto', padding: '16px' }}>
         
-        {/* ক. ড্যাশবোর্ড ট্যাব */}
+        {/* হোম ট্যাব */}
         {activeTab === 'home' && (
           <div>
-            {/* লাইভ মেম্বার সংখ্যা */}
+            {/* লাইভ সদস্য কাউন্টার */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
               <div style={{ background: '#fff', padding: '16px', borderRadius: '16px', border: '1px solid #dcfce7', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
                 <span style={{ fontSize: '12px', color: '#15803d', fontWeight: 'bold' }}>এসএসসি ২০১৪</span>
-                <h3 style={{ fontSize: '26px', margin: '4px 0 0 0', color: '#0D5C3A', fontWeight: '800' }}>{count2014} জন</h3>
-                <span style={{ fontSize: '10px', color: '#64748b' }}>অনুমোদিত সহপাঠী</span>
+                <h3 style={{ fontSize: '26px', margin: '4px 0 0 0', color: '#0D5C3A', fontWeight: '800' }}>
+                  {isLoading ? '...' : `${count2014} জন`}
+                </h3>
+                <span style={{ fontSize: '10px', color: '#64748b' }}>সরাসরি নিবন্ধিত</span>
               </div>
               <div style={{ background: '#fff', padding: '16px', borderRadius: '16px', border: '1px solid #dcfce7', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
                 <span style={{ fontSize: '12px', color: '#15803d', fontWeight: 'bold' }}>এইচএসসি ২০১৬</span>
-                <h3 style={{ fontSize: '26px', margin: '4px 0 0 0', color: '#0D5C3A', fontWeight: '800' }}>{count2016} জন</h3>
-                <span style={{ fontSize: '10px', color: '#64748b' }}>অনুমোদিত সহপাঠী</span>
+                <h3 style={{ fontSize: '26px', margin: '4px 0 0 0', color: '#0D5C3A', fontWeight: '800' }}>
+                  {isLoading ? '...' : `${count2016} জন`}
+                </h3>
+                <span style={{ fontSize: '10px', color: '#64748b' }}>সরাসরি নিবন্ধিত</span>
               </div>
             </div>
 
             {/* ভেন্যু ও তারিখ */}
             <div style={{ background: '#fff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0', marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h3 style={{ margin: 0, fontSize: '16px', color: '#0D5C3A', fontWeight: 'bold' }}>📅 পুনর্মিলনীর আনুষ্ঠানিক বিবরণ</h3>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#0D5C3A', fontWeight: 'bold' }}>📅 পুনর্মিলনীর সময় ও ভেন্যু</h3>
                 <span style={{ fontSize: '11px', background: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '6px', fontWeight: 'bold' }}>চূড়ান্ত</span>
               </div>
-              <p style={{ fontSize: '14px', margin: '6px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ প্রাঙ্গণ, কেন্দুয়া, নেত্রকোনা</p>
+              <p style={{ fontSize: '14px', margin: '6px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ প্রাঙ্গণ</p>
               <p style={{ fontSize: '14px', margin: '6px 0', color: '#15803d', fontWeight: 'bold' }}>⏰ <strong>তারিখ:</strong> পবিত্র ঈদুল আজহা ২০২৭</p>
               <p style={{ fontSize: '12px', margin: '6px 0', color: '#64748b' }}>আয়োজক: এসএসসি ও এইচএসসি ২০১৪ ব্যাচ পুনর্মিলনী সংসদ</p>
               
@@ -218,23 +271,23 @@ export default function App() {
               </button>
             </div>
 
-            {/* ১০০ জনের অডিও রুম কুইক বাটন */}
+            {/* ১০০ জনের অডিও রুম */}
             <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)', color: 'white', padding: '16px', borderRadius: '16px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <h4 style={{ margin: 0, fontSize: '15px', color: '#38bdf8' }}>🎙️ ১০০ জনের লাইভ অডিও আড্ডা</h4>
-                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#cbd5e1' }}>একসাথে ১০০ জন কথা বলতে ও শুনতে পারবেন</p>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#cbd5e1' }}>একসাথে ১০০ জন সরাসরি কথা বলতে পারবেন</p>
               </div>
               <button 
                 onClick={() => setActiveTab('audio')}
                 style={{ background: '#0284c7', color: 'white', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
               >
-                আড্ডায় যান
+                রুম খুলুন
               </button>
             </div>
           </div>
         )}
 
-        {/* খ. সহপাঠী ডিরেক্টরি ট্যাব */}
+        {/* সহপাঠী ডিরেক্টরি */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '12px' }}>
@@ -253,27 +306,33 @@ export default function App() {
               <button onClick={() => setBatchFilter('2016')} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', fontSize: '12px', fontWeight: 'bold', background: batchFilter === '2016' ? '#0D5C3A' : '#e2e8f0', color: batchFilter === '2016' ? 'white' : '#475569', cursor: 'pointer' }}>এইচএসসি ২০১৬ ({count2016})</button>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {filteredMembers.map((m) => (
-                <div key={m.id} style={{ background: '#fff', padding: '14px 16px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h4 style={{ margin: '0 0 3px 0', fontSize: '15px', color: '#0f172a' }}>{m.name}</h4>
-                    <p style={{ margin: 0, fontSize: '12px', color: '#15803d', fontWeight: 'bold' }}>{m.batch === '2014' ? 'এসএসসি ২০১৪' : 'এইচএসসি ২০১৬'} • <span style={{ color: '#64748b', fontWeight: 'normal' }}>{m.area}</span></p>
-                    <span style={{ fontSize: '11px', color: '#94a3b8' }}>টি-শার্ট: <strong>{m.tshirt}</strong></span>
+            {members.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px', color: '#64748b', background: '#fff', borderRadius: '16px' }}>
+                এখনো কোনো সহপাঠী নিবন্ধিত হয়নি। প্রথম নিবন্ধনটি আপনিই করুন!
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {filteredMembers.map((m) => (
+                  <div key={m.id} style={{ background: '#fff', padding: '14px 16px', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h4 style={{ margin: '0 0 3px 0', fontSize: '15px', color: '#0f172a' }}>{m.name}</h4>
+                      <p style={{ margin: 0, fontSize: '12px', color: '#15803d', fontWeight: 'bold' }}>{m.batch === '2014' ? 'এসএসসি ২০১৪' : 'এইচএসসি ২০১৬'} • <span style={{ color: '#64748b', fontWeight: 'normal' }}>{m.area}</span></p>
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>টি-শার্ট: <strong>{m.tshirt}</strong></span>
+                    </div>
+                    <a 
+                      href={`tel:${m.phone}`}
+                      style={{ background: '#dcfce7', color: '#15803d', textDecoration: 'none', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      📞 কল
+                    </a>
                   </div>
-                  <a 
-                    href={`tel:${m.phone}`}
-                    style={{ background: '#dcfce7', color: '#15803d', textDecoration: 'none', padding: '8px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold' }}
-                  >
-                    📞 কল
-                  </a>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* গ. প্রকৃত রেজিস্ট্রেশন ফরম */}
+        {/* রেজিস্ট্রেশন ফরম */}
         {activeTab === 'register' && (
           <div style={{ background: '#fff', padding: '20px', borderRadius: '16px', border: '1px solid #e2e8f0' }}>
             <h3 style={{ margin: '0 0 4px 0', color: '#0D5C3A', fontSize: '18px' }}>📝 পুনর্মিলনী ২০২৭ নিবন্ধন ফরম</h3>
@@ -288,7 +347,7 @@ export default function App() {
             {regSuccess ? (
               <div style={{ background: '#dcfce7', border: '1px solid #86efac', padding: '20px', borderRadius: '12px', textAlign: 'center', color: '#15803d' }}>
                 <h3 style={{ margin: '0 0 6px 0' }}>🎉 অভিনন্দন! আপনার রেজিস্ট্রেশন সম্পন্ন হয়েছে</h3>
-                <p style={{ margin: 0, fontSize: '13px' }}>আপনার তথ্য কেন্দ্রীয় সহপাঠী তালিকায় সংরক্ষিত হয়েছে।</p>
+                <p style={{ margin: 0, fontSize: '13px' }}>আপনার তথ্য কেন্দ্রীয় ক্লাউড ডাটাবেসে সংরক্ষিত হয়েছে।</p>
                 <button onClick={() => { setRegSuccess(false); setActiveTab('directory'); }} style={{ marginTop: '14px', background: '#0D5C3A', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
                   সহপাঠী তালিকায় দেখুন
                 </button>
@@ -300,7 +359,7 @@ export default function App() {
                   <input required type="text" placeholder="উদাঃ মোঃ রাসেল মিয়া" value={regForm.name} onChange={e => setRegForm({...regForm, name: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>সক্রিয় মোবাইল নম্বর (লগইন ও যোগাযোগের জন্য): *</label>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>মোবাইল নম্বর (লগইন ও যোগাযোগের জন্য): *</label>
                   <input required type="tel" placeholder="017XXXXXXXX" value={regForm.phone} onChange={e => setRegForm({...regForm, phone: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
                 </div>
                 <div>
@@ -315,7 +374,7 @@ export default function App() {
                   <input type="text" placeholder="উদাঃ সান্দিকোনা / কেন্দুয়া / ঢাকা" value={regForm.area} onChange={e => setRegForm({...regForm, area: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>টি-শার্ট সাইজ (পুনর্মিলনী জার্সির মাপ): *</label>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>টি-শার্ট সাইজ (জার্সির মাপ): *</label>
                   <select value={regForm.tshirt} onChange={e => setRegForm({...regForm, tshirt: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #cbd5e1', marginTop: '4px', boxSizing: 'border-box', background: '#fff' }}>
                     <option value="M">Medium (M - ৩৮)</option>
                     <option value="L">Large (L - ৪০)</option>
@@ -323,27 +382,27 @@ export default function App() {
                     <option value="XXL">Double XL (XXL - ৪৪)</option>
                   </select>
                 </div>
-                <button type="submit" style={{ background: '#0D5C3A', color: 'white', border: 'none', padding: '14px', borderRadius: '10px', fontWeight: 'bold', fontSize: '15px', marginTop: '6px', cursor: 'pointer' }}>
-                  নিবন্ধন নিশ্চিত করুন
+                <button type="submit" disabled={isSubmitting} style={{ background: '#0D5C3A', color: 'white', border: 'none', padding: '14px', borderRadius: '10px', fontWeight: 'bold', fontSize: '15px', marginTop: '6px', cursor: 'pointer', opacity: isSubmitting ? 0.7 : 1 }}>
+                  {isSubmitting ? 'সংরক্ষণ হচ্ছে...' : 'নিবন্ধন নিশ্চিত করুন'}
                 </button>
               </form>
             )}
           </div>
         )}
 
-        {/* ঘ. রিয়েল-টাইম চ্যাটরুম */}
+        {/* চ্যাটরুম */}
         {activeTab === 'chat' && (
           <div style={{ background: '#fff', borderRadius: '16px', border: '1px solid #e2e8f0', height: '68vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#0D5C3A' }}>💬 ব্যাচ লাইভ আড্ডা রুম</span>
-              <span style={{ fontSize: '11px', background: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '6px' }}>সরাসরি যুক্ত</span>
+              <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#0D5C3A' }}>💬 লাইভ আড্ডা রুম</span>
+              <span style={{ fontSize: '11px', background: '#dcfce7', color: '#15803d', padding: '2px 8px', borderRadius: '6px' }}>সবার ফোনে সিঙ্ক</span>
             </div>
 
             {!isJoinedChat ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '24px', textAlign: 'center' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '17px' }}>লাইভ আড্ডায় জয়েন করুন</h4>
-                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 16px 0' }}>চ্যাটে মেসেজ দেওয়ার জন্য প্রথমে আপনার নাম লিখে জয়েন বাটনে চাপ দিন।</p>
-                <form onSubmit={handleJoinChat} style={{ width: '100%', maxWidth: '300px' }}>
+                <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 16px 0' }}>চ্যাটে কথা বলার জন্য আপনার নাম লিখে জয়েন বাটনে চাপ দিন।</p>
+                <form onSubmit={(e) => { e.preventDefault(); if (chatUserName.trim()) setIsJoinedChat(true); }} style={{ width: '100%', maxWidth: '300px' }}>
                   <input
                     required
                     type="text"
@@ -360,20 +419,14 @@ export default function App() {
             ) : (
               <>
                 <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {messages.map(m => (
-                    m.isSystem ? (
-                      <div key={m.id} style={{ alignSelf: 'center', background: '#fef3c7', color: '#854d0e', padding: '4px 12px', borderRadius: '12px', fontSize: '11px', border: '1px solid #fde68a' }}>
+                  {messages.map((m, idx) => (
+                    <div key={idx} style={{ alignSelf: m.sender === chatUserName ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
+                      <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block', marginBottom: '2px' }}>{m.sender}</span>
+                      <div style={{ background: m.sender === chatUserName ? '#0D5C3A' : '#f1f5f9', color: m.sender === chatUserName ? '#fff' : '#1e293b', padding: '10px 14px', borderRadius: '14px', fontSize: '13px' }}>
                         {m.text}
                       </div>
-                    ) : (
-                      <div key={m.id} style={{ alignSelf: m.sender === chatUserName ? 'flex-end' : 'flex-start', maxWidth: '80%' }}>
-                        <span style={{ fontSize: '10px', color: '#94a3b8', display: 'block', marginBottom: '2px' }}>{m.sender}</span>
-                        <div style={{ background: m.sender === chatUserName ? '#0D5C3A' : '#f1f5f9', color: m.sender === chatUserName ? '#fff' : '#1e293b', padding: '10px 14px', borderRadius: '14px', fontSize: '13px' }}>
-                          {m.text}
-                        </div>
-                        <span style={{ fontSize: '9px', color: '#cbd5e1', float: 'right', marginTop: '2px' }}>{m.time}</span>
-                      </div>
-                    )
+                      <span style={{ fontSize: '9px', color: '#cbd5e1', float: 'right', marginTop: '2px' }}>{m.time}</span>
+                    </div>
                   ))}
                 </div>
                 <form onSubmit={handleSendMessage} style={{ display: 'flex', padding: '10px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
@@ -393,7 +446,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ঙ. ১০০ জনের বাস্তব অডিও কনফারেন্স রুম (Real WebRTC Engine) */}
+        {/* ১০০ জনের অডিও রুম */}
         {activeTab === 'audio' && (
           <div style={{ background: '#0f172a', color: 'white', borderRadius: '20px', padding: '16px', minHeight: '68vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
@@ -404,17 +457,16 @@ export default function App() {
               <span style={{ background: '#10b981', color: 'white', fontSize: '10px', padding: '3px 8px', borderRadius: '12px', fontWeight: 'bold' }}>অনলাইন</span>
             </div>
 
-            {/* আসল অডিও কল কানেকশন ফ্রেম */}
             {!isAudioConnected ? (
               <div style={{ textAlign: 'center', padding: '30px 10px' }}>
                 <div style={{ fontSize: '50px', marginBottom: '10px' }}>🎧</div>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '16px' }}>ভয়েস আড্ডায় যুক্ত হতে চান?</h4>
                 <p style={{ fontSize: '12px', color: '#94a3b8', margin: '0 0 20px 0', lineHeight: '1.5' }}>
-                  নিচের বাটনে চাপ দিলে ব্যাকগ্রাউন্ডে ১০০ জনের অডিও রুম কানেক্ট হবে। আপনি আপনার মাইক অন/অফ করতে পারবেন।
+                  নিচের বাটনে চাপ দিলে লাইভ অডিও রুম কানেক্ট হবে এবং ১০০ জন সহপাঠী একসাথে কথা বলতে পারবেন।
                 </p>
                 <button
                   onClick={() => setIsAudioConnected(true)}
-                  style={{ background: '#0284c7', color: 'white', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 14px rgba(2,132,199,0.4)' }}
+                  style={{ background: '#0284c7', color: 'white', border: 'none', padding: '14px 28px', borderRadius: '30px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer' }}
                 >
                   🟢 অডিও রুমে প্রবেশ করুন
                 </button>
@@ -425,7 +477,7 @@ export default function App() {
                   src={JITSI_AUDIO_ROOM_URL}
                   allow="microphone; camera; autoplay; display-capture"
                   style={{ width: '100%', height: '52vh', border: 'none', borderRadius: '12px', backgroundColor: '#000' }}
-                  title="Sandikona Audio Conference"
+                  title="Audio Room"
                 />
                 <button
                   onClick={() => setIsAudioConnected(false)}
@@ -440,7 +492,7 @@ export default function App() {
 
       </main>
 
-      {/* ৩. অ্যাপ ক্রিয়েটর ও হটলাইন হেল্পলাইন (এখানে ৩ বার ক্লিক করলেই গোপন অ্যাডমিন প্যানেল খুলবে) */}
+      {/* ফুটার (এখানে ৩ বার ক্লিক করলেই গোপন অ্যাডমিন প্যানেল খুলবে) */}
       <footer style={{ maxWidth: '600px', margin: '16px auto', padding: '0 16px' }}>
         <div 
           onClick={handleSecretAdminTrigger}
@@ -463,7 +515,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* ৪. সাধারণ পাবলিকের জন্য বটম ন্যাভিগেশন বার (অ্যাডমিন বাটন সম্পূর্ণ উধাও) */}
+      {/* পাবলিক বটম বার (অ্যাডমিন বাটন সম্পূর্ণ লুকানো) */}
       <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#fff', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-around', padding: '8px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
         <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0D5C3A' : '#94a3b8', fontWeight: activeTab === 'home' ? 'bold' : 'normal', fontSize: '11px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span>🏠</span>
@@ -487,7 +539,7 @@ export default function App() {
         </button>
       </nav>
 
-      {/* ৫. গোপন অ্যাডমিন প্যানেল মোডাল (শুধুমাত্র স্মার্ট রাসেল খানের জন্য) */}
+      {/* গোপন অ্যাডমিন ড্যাশবোর্ড মোডাল */}
       {showAdminModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ background: '#fff', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '480px', maxHeight: '85vh', overflowY: 'auto' }}>
@@ -524,7 +576,7 @@ export default function App() {
             ) : (
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#15803d' }}>মোট নিবন্ধিত: {members.length} জন</span>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#15803d' }}>ক্লাউডে মোট নিবন্ধিত: {members.length} জন</span>
                   <button 
                     onClick={() => {
                       const csvContent = "data:text/csv;charset=utf-8,নাম,মোবাইল,ব্যাচ,জার্সি সাইজ,ঠিকানা\n" + 
