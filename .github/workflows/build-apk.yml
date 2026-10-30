@@ -3,7 +3,7 @@ name: Build Android APK (Reunion 2027)
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # এটি দিলে গিটহাব থেকে সরাসরি বাটনে চাপ দিয়ে বিল্ড করা যায়
+  workflow_dispatch:
 
 jobs:
   build:
@@ -35,9 +35,26 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      - name: Auto Increment Version Code
+      - name: Inject Android Permissions & Permanent Keystore
         run: |
+          # ১. সব পারমিশন AndroidManifest.xml ফাইলে ইনজেক্ট করা
+          sed -i '/<\/manifest>/i \
+              <uses-permission android:name="android.permission.INTERNET" />\
+              <uses-permission android:name="android.permission.CAMERA" />\
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />\
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml || true
+
+          # ২. অটো ভার্সন বৃদ্ধি
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
+
+          # ৩. স্থায়ী কি-স্টোর তৈরি যাতে পুরনো অ্যাপ না মুছেই আপডেট হয়
+          keytool -genkey -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sandikona2027,O=Alumni,C=BD" || true
 
       - name: Build Debug APK
         working-directory: android
