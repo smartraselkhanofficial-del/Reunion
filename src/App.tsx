@@ -57,10 +57,14 @@ export default function App() {
   const [headerBgUrl, setHeaderBgUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
+  // নোটিফিকেশন পারমিশন স্টেট
+  const [notifPermission, setNotifPermission] = useState<string>('default');
+
   // ইন-অ্যাপ নোটিফিকেশন ব্যানার
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
   const isInitialMembers = useRef(false);
   const isInitialMessages = useRef(false);
+  const isInitialAdminNotifs = useRef(false);
 
   // টাইপিং ইন্ডিকেটর স্টেট
   const [typingUser, setTypingUser] = useState<string | null>(null);
@@ -73,6 +77,11 @@ export default function App() {
   const [clickCount, setClickCount] = useState(0);
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
+  
+  // অ্যাডমিন ব্রডকাস্ট নোট স্টেট
+  const [adminBroadcastTitle, setAdminBroadcastTitle] = useState('');
+  const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
+  const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
   const ADMIN_PIN = '74798'; // স্মার্ট রাসেল খানের সিক্রেট পিন
 
   // রেজিস্ট্রেশন ফরম স্টেট
@@ -98,29 +107,31 @@ export default function App() {
   const [callingMode, setCallingMode] = useState<'none' | 'audio' | 'video'>('none');
 
   // ========================================================
-  // ১. সকল পারমিশন সক্রিয় করা (ক্যামেরা, মাইক, নোটিফিকেশন)
+  // ১. সকল পারমিশন হ্যান্ডলার (নোটিফিকেশন, ক্যামেরা, মাইক)
   // ========================================================
-  const requestAllAppPermissions = async () => {
-    // নোটিফিকেশন পারমিশন
-    if ("Notification" in window && Notification.permission !== "granted") {
-      try { await Notification.requestPermission(); } catch (e) {}
-    }
-    // ক্যামেরা ও মাইক্রোফোন পারমিশন
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  const checkAndRequestNotificationPermission = async () => {
+    if ("Notification" in window) {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-        stream.getTracks().forEach(t => t.stop()); // পারমিশন নিয়ে স্ট্রিম ক্লোজ করা
+        const perm = await Notification.requestPermission();
+        setNotifPermission(perm);
       } catch (e) {
-        console.log("Media permission prompted");
+        setNotifPermission(Notification.permission);
       }
     }
   };
 
   useEffect(() => {
-    requestAllAppPermissions();
+    if ("Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => stream.getTracks().forEach(t => t.stop()))
+        .catch(() => console.log("Media initialized"));
+    }
   }, []);
 
-  // সাউন্ড ও নোটিফিকেশন ইঞ্জিন
+  // সাউন্ড ও ভাইব্রেশন ইঞ্জিন
   const playChimeSound = () => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -142,18 +153,18 @@ export default function App() {
 
   const notifyUser = (title: string, body: string, icon: string = '🔔') => {
     playChimeSound();
-    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+    if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
 
     if ("Notification" in window && Notification.permission === "granted") {
       try { new Notification(title, { body }); } catch (e) {}
     }
 
     setActiveToast({ title, body, icon });
-    setTimeout(() => setActiveToast(null), 5000);
+    setTimeout(() => setActiveToast(null), 6000);
   };
 
   // ========================================================
-  // ২. ফায়ারবেস থেকে লাইভ মেম্বার, চ্যাট ও সেটিংস সিঙ্ক
+  // ২. ফায়ারবেস থেকে লাইভ মেম্বার, চ্যাট ও অ্যাডমিন ব্রডকাস্ট সিঙ্ক
   // ========================================================
   useEffect(() => {
     // মেম্বার লিস্ট
@@ -175,7 +186,7 @@ export default function App() {
       }
     }, () => setIsLoading(false));
 
-    // হোয়াটসঅ্যাপ স্টাইল চ্যাট মেসেজ (সঠিক টাইমস্ট্যাম্প অনুসারে সর্টেড)
+    // হোয়াটসঅ্যাপ মেসেজ লিসেনার (সঠিক সিকোয়েন্সে)
     const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
     const unsubChat = onSnapshot(qMessages, (snap) => {
       const msgs: ChatMsg[] = [];
@@ -193,6 +204,25 @@ export default function App() {
         });
       } else {
         isInitialMessages.current = true;
+      }
+    });
+
+    // অ্যাডমিন সরাসরি ব্রডকাস্ট নোটিফিকেশন লিসেনার
+    const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
+    const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
+      if (isInitialAdminNotifs.current) {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const data = change.doc.data();
+            notifyUser(
+              data.title || "📢 অ্যাডমিন বার্তা — স্মার্ট রাসেল খান", 
+              data.body || "", 
+              "📢"
+            );
+          }
+        });
+      } else {
+        isInitialAdminNotifs.current = true;
       }
     });
 
@@ -221,12 +251,12 @@ export default function App() {
     return () => {
       unsubMembers();
       unsubChat();
+      unsubAdminBroadcast();
       unsubSettings();
       unsubTyping();
     };
   }, [chatUser]);
 
-  // মেসেজ আসলে স্বয়ংক্রিয়ভাবে নিচে স্ক্রল
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, activeTab, typingUser]);
@@ -240,6 +270,31 @@ export default function App() {
     } else {
       setClickCount(next);
       setTimeout(() => setClickCount(0), 2000);
+    }
+  };
+
+  // অ্যাডমিন কর্তৃক সবাইকে লাইভ পুশ নোটিফিকেশন পাঠানো
+  const handleSendAdminBroadcast = async () => {
+    if (!adminBroadcastMsg.trim()) {
+      alert('অনুগ্রহ করে নোটিফিকেশনের বার্তাটি লিখুন।');
+      return;
+    }
+
+    setIsSendingBroadcast(true);
+    try {
+      await addDoc(collection(db, "admin_broadcasts"), {
+        title: adminBroadcastTitle.trim() || '📢 জরুরি বার্তা — স্মার্ট রাসেল খান',
+        body: adminBroadcastMsg.trim(),
+        timestamp: Date.now(),
+        dateStr: new Date().toLocaleDateString('bn-BD')
+      });
+      setAdminBroadcastTitle('');
+      setAdminBroadcastMsg('');
+      alert('সফলভাবে সকল সহপাঠীর ফোনে নোটিফিকেশন পৌঁছে গেছে!');
+    } catch (err) {
+      alert('নোটিফিকেশন পাঠাতে সমস্যা হয়েছে। ইন্টারনেট চেক করুন।');
+    } finally {
+      setIsSendingBroadcast(false);
     }
   };
 
@@ -261,7 +316,7 @@ export default function App() {
     }
   };
 
-  // অ্যাডমিন ব্যাকগ্রাউন্ড ছবি পরিবর্তন
+  // গ্যালারি থেকে হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন
   const handleHeaderBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -290,13 +345,13 @@ export default function App() {
     if (!window.confirm(`আপনি কি "${memberName}"-কে তালিকা থেকে বাদ দিতে চান?`)) return;
     try {
       await deleteDoc(doc(db, "members", id));
-      alert(`"${memberName}"-কে বাদ দেওয়া হয়েছে।`);
+      alert(`"${memberName}"-কে তালিকা থেকে বাদ দেওয়া হয়েছে।`);
     } catch (err) {
       alert('ডিলিট করা যায়নি।');
     }
   };
 
-  // রেজিস্ট্রেশন হ্যান্ডলার
+  // মেম্বার রেজিস্ট্রেশন হ্যান্ডলার
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
@@ -371,7 +426,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // হোয়াটসঅ্যাপ চ্যাট সেন্ড (সঠিক সময় ও সিকোয়েন্স অনুযায়ী)
+  // হোয়াটসঅ্যাপ চ্যাট সেন্ড (সঠিক সিকোয়েন্সে)
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!msgInput.trim() && !attachedFile) return;
@@ -404,7 +459,7 @@ export default function App() {
     }
   };
 
-  // সর্বজনীন ডাউনলোড লিংক সহ শেয়ার হ্যান্ডলার
+  // ডাউনলোড লিংক সহ শেয়ার হ্যান্ডলার
   const handleShareApp = async () => {
     const finalDownloadUrl = apkDownloadUrl.trim() || 'https://github.com';
     const shareText = `🎉 সান্দিকোনা স্কুল এন্ড কলেজ — পুনর্মিলনী ২০২৭\nএসএসসি ব্যাচ ২০১৪-এর অফিসিয়াল মোবাইল অ্যাপে যুক্ত হোন ও রেজিস্ট্রেশন সম্পন্ন করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n${finalDownloadUrl}`;
@@ -455,15 +510,15 @@ export default function App() {
           display: 'flex',
           alignItems: 'center',
           gap: '12px',
-          border: '1.5px solid #10B981',
+          border: '2px solid #F59E0B',
           animation: 'slideDown 0.3s ease-out'
         }}>
           <div style={{ fontSize: '24px' }}>{activeToast.icon}</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', color: '#38BDF8', fontWeight: '800' }}>
+            <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', color: '#FCD34D', fontWeight: '800' }}>
               {activeToast.title}
             </h5>
-            <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <p style={{ margin: 0, fontSize: '12px', color: '#F1F5F9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {activeToast.body}
             </p>
           </div>
@@ -471,49 +526,99 @@ export default function App() {
         </div>
       )}
 
-      {/* ১. বন্ধুদের ছবির ব্যাকগ্রাউন্ড সহ হেডার ব্যানার */}
+      {/* নোটিফিকেশন অন করার স্মার্ট প্রম্পট বার */}
+      {notifPermission !== 'granted' && (
+        <div style={{
+          backgroundColor: '#FEF3C7',
+          color: '#92400E',
+          padding: '8px 12px',
+          fontSize: '11px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderBottom: '1px solid #FDE68A'
+        }}>
+          <span>🔔 জরুরি নোটিশ পেতে নোটিফিকেশন অন করুন</span>
+          <button
+            onClick={checkAndRequestNotificationPermission}
+            style={{
+              backgroundColor: '#D97706',
+              color: '#FFFFFF',
+              border: 'none',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              fontSize: '11px',
+              fontWeight: '700',
+              cursor: 'pointer'
+            }}
+          >
+            অন করুন
+          </button>
+        </div>
+      )}
+
+      {/* ১. বন্ধুদের ছবি একদম উজ্জ্বল ও স্পষ্ট ব্যাকগ্রাউন্ড হেডার */}
       <header style={{
         backgroundImage: headerBgUrl 
-          ? `linear-gradient(135deg, rgba(10, 77, 46, 0.82) 0%, rgba(19, 117, 71, 0.84) 60%, rgba(8, 62, 36, 0.88) 100%), url('${headerBgUrl}')`
-          : `linear-gradient(135deg, rgba(10, 77, 46, 0.86) 0%, rgba(19, 117, 71, 0.88) 60%, rgba(8, 62, 36, 0.92) 100%), url('/header-bg.jpg')`,
+          ? `linear-gradient(180deg, rgba(0, 0, 0, 0.30) 0%, rgba(10, 77, 46, 0.25) 50%, rgba(5, 35, 20, 0.65) 100%), url('${headerBgUrl}')`
+          : `linear-gradient(180deg, rgba(0, 0, 0, 0.30) 0%, rgba(10, 77, 46, 0.25) 50%, rgba(5, 35, 20, 0.65) 100%), url('/header-bg.jpg')`,
         backgroundSize: 'cover',
-        backgroundPosition: 'center',
+        backgroundPosition: 'center 25%',
         backgroundRepeat: 'no-repeat',
         color: '#FFFFFF',
-        padding: '24px 16px 18px 16px',
+        padding: '28px 16px 20px 16px',
         textAlign: 'center',
         borderBottomLeftRadius: '24px',
         borderBottomRightRadius: '24px',
-        boxShadow: '0 6px 20px rgba(10, 77, 46, 0.3)',
+        boxShadow: '0 6px 20px rgba(0, 0, 0, 0.25)',
         position: 'relative'
       }}>
         <div style={{ maxWidth: '520px', margin: '0 auto' }}>
           <span style={{
             fontSize: '11px',
-            backgroundColor: 'rgba(212, 175, 55, 0.35)',
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
             color: '#FEF08A',
             padding: '5px 14px',
             borderRadius: '20px',
-            border: '1px solid rgba(212, 175, 55, 0.5)',
-            fontWeight: '800'
+            border: '1.5px solid rgba(212, 175, 55, 0.7)',
+            fontWeight: '800',
+            letterSpacing: '0.5px',
+            backdropFilter: 'blur(4px)',
+            display: 'inline-block'
           }}>
             সান্দিকোনা স্কুল এন্ড কলেজ
           </span>
-          <h1 style={{ fontSize: '26px', margin: '8px 0 2px 0', fontWeight: '900', textShadow: '0 2px 6px rgba(0,0,0,0.4)' }}>
+
+          <h1 style={{ 
+            fontSize: '28px', 
+            margin: '10px 0 2px 0', 
+            fontWeight: '900', 
+            textShadow: '0 2px 10px rgba(0,0,0,0.9), 0 1px 4px rgba(0,0,0,0.9)' 
+          }}>
             পুনর্মিলনী ২০২৭
           </h1>
-          <p style={{ fontSize: '14px', margin: 0, opacity: 0.95, fontWeight: '700', textShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>
+
+          <p style={{ 
+            fontSize: '15px', 
+            margin: 0, 
+            fontWeight: '800', 
+            color: '#F0FDF4',
+            textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.9)' 
+          }}>
             এসএসসি ব্যাচ ২০১৪
           </p>
+
           <div style={{
-            marginTop: '8px',
+            marginTop: '10px',
             display: 'inline-block',
-            backgroundColor: 'rgba(0, 0, 0, 0.35)',
-            padding: '4px 14px',
-            borderRadius: '12px',
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            padding: '5px 16px',
+            borderRadius: '14px',
             fontSize: '11px',
-            color: '#F1F5F9',
-            fontWeight: '600'
+            color: '#F8FAFC',
+            fontWeight: '700',
+            backdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255, 255, 255, 0.2)'
           }}>
             🤝 আয়োজনে: এসএসসি ২০১৪ ব্যাচ পুনর্মিলনী পরিষদ
           </div>
@@ -622,7 +727,7 @@ export default function App() {
           </div>
         )}
 
-        {/* সহপাঠী ডিরেক্টরি (পাবলিক থেকে নম্বর ও হোয়াটসঅ্যাপ গোপন) */}
+        {/* সহপাঠী ডিরেক্টরি (নম্বর ও হোয়াটসঅ্যাপ গোপন) */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '12px' }}>
@@ -731,7 +836,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ৪. খাঁটি হোয়াটসঅ্যাপ স্টাইল আড্ডা (সঠিক মেসেজ সিকোয়েন্স ও মিডিয়া আপলোড/ডাউনলোড) */}
+        {/* হোয়াটসঅ্যাপ স্টাইল আড্ডা */}
         {activeTab === 'chat' && (
           <div style={{
             background: '#E5DDD5',
@@ -743,7 +848,6 @@ export default function App() {
             overflow: 'hidden',
             boxShadow: '0 4px 16px rgba(0,0,0,0.06)'
           }}>
-            {/* হোয়াটসঅ্যাপ হেডার */}
             <div style={{
               padding: '10px 14px',
               background: '#075E54',
@@ -764,7 +868,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ইন-অ্যাপ কলিং বাটন */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   onClick={() => setCallingMode('audio')}
@@ -812,7 +915,6 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* সঠিক সিকোয়েন্সে সাজানো মেসেজ তালিকা (নতুন মেসেজ নিচে) */}
                 <div style={{ flex: 1, padding: '12px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {chatMessages.map((m) => {
                     const isMe = m.sender === chatUser;
@@ -832,7 +934,6 @@ export default function App() {
                           </span>
                         )}
 
-                        {/* ছবি ও সরাসরি ডাউনলোড */}
                         {m.fileUrl && m.fileType?.startsWith('image') && (
                           <div style={{ marginBottom: '4px' }}>
                             <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', display: 'block' }} />
@@ -842,7 +943,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* ভিডিও ও ডাউনলোড */}
                         {m.fileUrl && m.fileType?.startsWith('video') && (
                           <div style={{ marginBottom: '4px' }}>
                             <video src={m.fileUrl} controls style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', display: 'block' }} />
@@ -852,7 +952,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* ফাইল ডাউনলোড */}
                         {m.fileUrl && !m.fileType?.startsWith('image') && !m.fileType?.startsWith('video') && (
                           <a href={m.fileUrl} download={m.fileName || "file"} style={{ display: 'inline-block', fontSize: '11px', color: '#0284C7', margin: '4px 0', textDecoration: 'underline', fontWeight: 'bold' }}>
                             ⬇️ {m.fileName || 'ফাইলটি ডাউনলোড করুন'}
@@ -871,7 +970,6 @@ export default function App() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* ফাইল সিলেক্ট প্রিভিউ বার */}
                 {attachedFile && (
                   <div style={{ padding: '6px 12px', background: '#F1F5F9', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '11px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
@@ -883,7 +981,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* হোয়াটসঅ্যাপ ইনপুট বক্স */}
                 <form onSubmit={handleSendChat} style={{ display: 'flex', alignItems: 'center', padding: '8px', background: '#F0F2F5', borderTop: '1px solid #CBD5E1', gap: '6px' }}>
                   <input
                     type="file"
@@ -919,7 +1016,7 @@ export default function App() {
 
       </main>
 
-      {/* ৫. ইন-অ্যাপ কলিং ওভারলে স্ক্রিন */}
+      {/* ইন-অ্যাপ কলিং ওভারলে স্ক্রিন */}
       {callingMode !== 'none' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000000', zIndex: 10000, display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '10px 14px', background: '#075E54', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -942,10 +1039,9 @@ export default function App() {
         </div>
       )}
 
-      {/* ৬. সর্বজনীন অ্যাপ শেয়ার বাটন ও ফুটার */}
+      {/* সর্বজনীন অ্যাপ শেয়ার বাটন ও ফুটার */}
       <footer style={{ maxWidth: '520px', margin: '14px auto', padding: '0 16px' }}>
         
-        {/* বড় শেয়ার বাটন */}
         <div style={{
           background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
           color: '#FFFFFF',
@@ -979,7 +1075,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* অ্যাপ ক্রিয়েটর ক্রেডিট (এখানে ৩ বার চাপলে গোপন অ্যাডমিন প্যানেল খুলবে) */}
         <div 
           onClick={handleAdminTrigger}
           style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '16px', padding: '12px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer', userSelect: 'none' }}
@@ -1001,7 +1096,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* ৭. বটম ন্যাভিগেশন বার */}
+      {/* বটম ন্যাভিগেশন বার */}
       <nav style={{
         position: 'fixed',
         bottom: 0,
@@ -1033,7 +1128,7 @@ export default function App() {
         </button>
       </nav>
 
-      {/* ৮. গোপন অ্যাডমিন প্যানেল মোডাল */}
+      {/* ৮. গোপন অ্যাডমিন কন্ট্রোল প্যানেল মোডাল */}
       {showAdmin && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '20px', width: '100%', maxWidth: '460px', maxHeight: '85vh', overflowY: 'auto' }}>
@@ -1068,7 +1163,38 @@ export default function App() {
               </div>
             ) : (
               <div>
-                {/* সরাসরি ফোনের গ্যালারি থেকে হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তনের অপশন */}
+                {/* 🔔 অ্যাডমিন কর্তৃক সবাইকে লাইভ পুশ নোটিফিকেশন/নোট পাঠানোর বক্স */}
+                <div style={{ background: '#FEF3C7', border: '1.5px solid #FCD34D', padding: '14px', borderRadius: '14px', marginBottom: '14px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#92400E', fontWeight: '800' }}>
+                    📢 সবাইকে নোটিফিকেশন / নোট পাঠান:
+                  </h4>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '11px', color: '#B45309' }}>
+                    এখানে লিখে সেন্ড করলে সাথে সাথে সব সহপাঠীর মোবাইল বেজে উঠবে!
+                  </p>
+                  <input
+                    type="text"
+                    placeholder="নোটিসের বিষয় (উদাঃ জরুরি পুনর্মিলনী মিটিং)"
+                    value={adminBroadcastTitle}
+                    onChange={e => setAdminBroadcastTitle(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #FDE68A', fontSize: '12px', boxSizing: 'border-box', marginBottom: '8px', outline: 'none', background: '#FFFFFF' }}
+                  />
+                  <textarea
+                    rows={2}
+                    placeholder="আপনার বার্তা বা নোটটি লিখুন..."
+                    value={adminBroadcastMsg}
+                    onChange={e => setAdminBroadcastMsg(e.target.value)}
+                    style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #FDE68A', fontSize: '12px', boxSizing: 'border-box', outline: 'none', background: '#FFFFFF' }}
+                  />
+                  <button
+                    onClick={handleSendAdminBroadcast}
+                    disabled={isSendingBroadcast}
+                    style={{ marginTop: '8px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', opacity: isSendingBroadcast ? 0.6 : 1 }}
+                  >
+                    {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
+                  </button>
+                </div>
+
+                {/* গ্যালারি থেকে হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন */}
                 <div style={{ background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '12px', borderRadius: '14px', marginBottom: '14px' }}>
                   <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#065F46' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
                   <input
@@ -1086,7 +1212,7 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* সরাসরি APK ডাউনলোড লিংক ও নোটিশ এডিটর */}
+                {/* APK ডাউনলোড লিংক ও নোটিশ এডিটর */}
                 <div style={{ background: '#F1F5F9', padding: '12px', borderRadius: '14px', marginBottom: '14px' }}>
                   <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#0F172A' }}>📥 শেয়ারের জন্য সরাসরি APK ডাউনলোড লিংক:</h4>
                   <input
@@ -1145,7 +1271,6 @@ export default function App() {
                         মোবাইল: <a href={`tel:${m.phone}`} style={{ color: '#0284C7', fontWeight: '700' }}>{m.phone}</a> | {m.area}
                       </div>
                       
-                      {/* অ্যাডমিন অ্যাকশন বাটন */}
                       <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', gap: '6px' }}>
                           <a href={`tel:${m.phone}`} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#137547', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>📞 কল</a>
