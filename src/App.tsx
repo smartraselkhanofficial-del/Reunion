@@ -5,9 +5,9 @@ import {
   collection, 
   addDoc, 
   onSnapshot, 
-  query, 
   doc, 
-  setDoc 
+  setDoc,
+  deleteDoc
 } from "firebase/firestore";
 
 // ফায়ারবেস কনফিগারেশন
@@ -38,6 +38,7 @@ interface ChatMsg {
   text?: string;
   fileUrl?: string;
   fileType?: string;
+  fileName?: string;
   time: string;
 }
 
@@ -51,13 +52,22 @@ export default function App() {
   const [announcement, setAnnouncement] = useState('পবিত্র ঈদুল আজহা ২০২৭ উপলক্ষে সান্দিকোনা স্কুল এন্ড কলেজের এসএসসি ২০১৪ ব্যাচের পুনর্মিলনী অনুষ্ঠিত হবে। সকল বন্ধুদের রেজিস্ট্রেশন করার অনুরোধ জানানো হচ্ছে।');
   const [isLoading, setIsLoading] = useState(true);
 
+  // ইন-অ্যাপ নোটিফিকেশন ব্যানার স্টেট
+  const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
+  const isInitialMembers = useRef(false);
+  const isInitialMessages = useRef(false);
+
+  // টাইপিং ইন্ডিকেটর স্টেট
+  const [typingUser, setTypingUser] = useState<string | null>(null);
+  const typingTimeoutRef = useRef<any>(null);
+
   // গোপন অ্যাডমিন প্যানেল স্টেট
   const [showAdmin, setShowAdmin] = useState(false);
   const [adminPin, setAdminPin] = useState('');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [clickCount, setClickCount] = useState(0);
   const [newNoticeInput, setNewNoticeInput] = useState('');
-  const ADMIN_PIN = '74798';
+  const ADMIN_PIN = '74798'; // স্মার্ট রাসেল খানের সিক্রেট পিন
 
   // রেজিস্ট্রেশন ফরম স্টেট
   const [name, setName] = useState('');
@@ -68,39 +78,138 @@ export default function App() {
   const [regSuccess, setRegSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // হোয়াটসঅ্যাপ স্টাইল চ্যাট ও মিডিয়া স্টেট
-  const [chatUser, setChatUser] = useState(() => localStorage.getItem('sandikona_chat_username') || '');
-  const [isJoinedChat, setIsJoinedChat] = useState(() => !!localStorage.getItem('sandikona_chat_username'));
+  // হোয়াটসঅ্যাপ স্টাইল চ্যাট ও স্থায়ী নাম (Permanent Login)
+  const [chatUser, setChatUser] = useState(() => localStorage.getItem('sandikona_user_name') || '');
+  const [isJoinedChat, setIsJoinedChat] = useState(() => !!localStorage.getItem('sandikona_user_name'));
   const [msgInput, setMsgInput] = useState('');
   const [attachedFile, setAttachedFile] = useState<{ url: string; type: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // কলিং মোডাল স্টেট (অডিও / ভিডিও)
+  // ইন-অ্যাপ কলিং স্টেট (অডিও / ভিডিও)
   const [callingMode, setCallingMode] = useState<'none' | 'audio' | 'video'>('none');
 
-  // ১. ফায়ারবেস থেকে লাইভ মেম্বার, চ্যাট ও এনাউন্সমেন্ট সিঙ্ক
+  // ========================================================
+  // 🔔 ক্রিস্টাল ক্লিয়ার সাউন্ড টিউন ও নোটিফিকেশন ইঞ্জিন
+  // ========================================================
+  const playChimeSound = () => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // Note D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12); // Note A5
+
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } catch (e) {}
+  };
+
+  const notifyUser = (title: string, body: string, icon: string = '🔔') => {
+    // ১. সাউন্ড ও ভাইব্রেশন
+    playChimeSound();
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+    // ২. ফোনের স্ট্যাটাস বার নোটিফিকেশন
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        new Notification(title, { body, icon: '/header-bg.jpg' });
+      } catch (e) {}
+    }
+
+    // ৩. অ্যাপের ওপর ড্রপ-ডাউন ব্যানার
+    setActiveToast({ title, body, icon });
+    setTimeout(() => setActiveToast(null), 5000);
+  };
+
+  // নোটিফিকেশন পারমিশন চাওয়া
   useEffect(() => {
-    // মেম্বার লিস্ট
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // ========================================================
+  // ১. ফায়ারবেস থেকে লাইভ মেম্বার ও মেসেজ ডিটেকশন
+  // ========================================================
+  useEffect(() => {
+    // মেম্বার লিস্ট লিসেনার
     const unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
       const list: Member[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as Member));
       setMembers(list);
       setIsLoading(false);
+
+      // নতুন রেজিস্ট্রেশন ডিটেকশন (প্রথমবার লোডের পর নতুন কেউ এলে নোটিফাই করবে)
+      if (isInitialMembers.current) {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const newMem = change.doc.data() as Member;
+            notifyUser(
+              "🎉 নতুন সহপাঠী যুক্ত হয়েছেন!",
+              `${newMem.name} (${newMem.area}) পুনর্মিলনীতে নিবন্ধন করেছেন।`,
+              "🎓"
+            );
+          }
+        });
+      } else {
+        isInitialMembers.current = true;
+      }
     }, () => setIsLoading(false));
 
-    // চ্যাট মেসেজ
+    // চ্যাট মেসেজ লিসেনার
     const unsubChat = onSnapshot(collection(db, "messages"), (snap) => {
       const msgs: ChatMsg[] = [];
       snap.forEach(d => msgs.push({ id: d.id, ...d.data() } as ChatMsg));
       msgs.sort((a, b) => (a.id > b.id ? 1 : -1));
       setChatMessages(msgs);
+
+      // নতুন মেসেজ নোটিফিকেশন ডিটেকশন
+      if (isInitialMessages.current) {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "added") {
+            const newMsg = change.doc.data() as ChatMsg;
+            // নিজের পাঠানো মেসেজে নোটিফিকেশন হবে না
+            if (newMsg.sender !== chatUser) {
+              notifyUser(
+                `💬 ${newMsg.sender}`,
+                newMsg.text || "📷 একটি ছবি/ফাইল পাঠিয়েছেন",
+                "💬"
+              );
+            }
+          }
+        });
+      } else {
+        isInitialMessages.current = true;
+      }
     });
 
-    // লাইভ স্ক্রলিং নোটিশ
+    // স্ক্রলিং নোটিশ লিসেনার
     const unsubNotice = onSnapshot(doc(db, "settings", "announcement"), (d) => {
       if (d.exists() && d.data()?.text) {
         setAnnouncement(d.data().text);
+      }
+    });
+
+    // টাইপিং ইন্ডিকেটর লিসেনার
+    const unsubTyping = onSnapshot(doc(db, "settings", "typing"), (d) => {
+      if (d.exists()) {
+        const data = d.data();
+        if (data?.user && data.user !== chatUser && Date.now() - data.time < 3500) {
+          setTypingUser(data.user);
+        } else {
+          setTypingUser(null);
+        }
       }
     });
 
@@ -108,14 +217,15 @@ export default function App() {
       unsubMembers();
       unsubChat();
       unsubNotice();
+      unsubTyping();
     };
-  }, []);
+  }, [chatUser]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, activeTab]);
+  }, [chatMessages, activeTab, typingUser]);
 
-  // গোপন অ্যাডমিন প্যানেল ট্রিগার (৩ বার ক্লিক)
+  // গোপন অ্যাডমিন প্যানেল ট্রিগার
   const handleAdminTrigger = () => {
     const next = clickCount + 1;
     if (next >= 3) {
@@ -127,7 +237,7 @@ export default function App() {
     }
   };
 
-  // অ্যাডমিন কর্তৃক লাইভ স্ক্রলিং নোটিশ আপডেট
+  // অ্যাডমিন নোটিশ আপডেট
   const handleUpdateNotice = async () => {
     if (!newNoticeInput.trim()) return;
     try {
@@ -140,7 +250,20 @@ export default function App() {
     }
   };
 
-  // মেম্বার রেজিস্ট্রেশন হ্যান্ডলার (ডুপ্লিকেট সুরক্ষা সহ)
+  // অ্যাডমিন কর্তৃক মেম্বার ডিলিট
+  const handleDeleteMember = async (id: string, memberName: string) => {
+    const confirmDelete = window.confirm(`আপনি কি নিশ্চিতভাবে "${memberName}"-কে তালিকা থেকে বাদ দিতে চান?`);
+    if (!confirmDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "members", id));
+      alert(`"${memberName}"-কে তালিকা থেকে সফলভাবে বাদ দেওয়া হয়েছে।`);
+    } catch (err) {
+      alert('মেম্বার ডিলিট করতে সমস্যা হয়েছে।');
+    }
+  };
+
+  // মেম্বার রেজিস্ট্রেশন হ্যান্ডলার
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError('');
@@ -181,12 +304,25 @@ export default function App() {
     }
   };
 
-  // ফাইল / ছবি / ভিডিও সিলেক্ট হ্যান্ডলার
+  // টাইপিং ব্রডকাস্ট
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setMsgInput(e.target.value);
+    if (!chatUser) return;
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    setDoc(doc(db, "settings", "typing"), { user: chatUser, time: Date.now() });
+
+    typingTimeoutRef.current = setTimeout(() => {
+      setDoc(doc(db, "settings", "typing"), { user: null, time: 0 });
+    }, 2500);
+  };
+
+  // ফাইল সিলেক্ট হ্যান্ডলার
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2.5 * 1024 * 1024) {
+    if (file.size > 2.8 * 1024 * 1024) {
       alert('অনুগ্রহ করে ২.৫ মেগাবাইটের কম সাইজের ছবি বা ভিডিও সিলেক্ট করুন।');
       return;
     }
@@ -202,7 +338,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // চ্যাট মেসেজ ও ফাইল পাঠানো
+  // মেসেজ পাঠানো
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!msgInput.trim() && !attachedFile) return;
@@ -217,6 +353,7 @@ export default function App() {
     if (attachedFile) {
       payload.fileUrl = attachedFile.url;
       payload.fileType = attachedFile.type;
+      payload.fileName = attachedFile.name;
     }
 
     try {
@@ -224,35 +361,35 @@ export default function App() {
       setMsgInput('');
       setAttachedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
+      setDoc(doc(db, "settings", "typing"), { user: null, time: 0 });
     } catch (err) {
       console.error(err);
     }
   };
 
-  // সর্বজনীন অ্যাপ শেয়ার অপশন
+  // বন্ধুদের সাথে অ্যাপ শেয়ার
   const handleShareApp = async () => {
-    const shareData = {
-      title: 'পুনর্মিলনী ২০২৭ - এসএসসি ব্যাচ ২০১৪',
-      text: 'সান্দিকোনা স্কুল এন্ড কলেজের এসএসসি ব্যাচ ২০১৪-এর পুনর্মিলনী ২০২৭ অফিসিয়াল অ্যাপে যুক্ত হোন ও রেজিস্ট্রেশন করুন!',
-      url: window.location.href
-    };
-
+    const shareText = `🎉 সান্দিকোনা স্কুল এন্ড কলেজ — পুনর্মিলনী ২০২৭\nএসএসসি ব্যাচ ২০১৪-এর অফিসিয়াল অ্যাপে এখনই রেজিস্ট্রেশন করো এবং সহপাঠীদের তালিকায় যুক্ত হও!\n\n📲 অ্যাপ ডাউনলোড লিংক: ${window.location.origin}`;
+    
     if (navigator.share) {
       try {
-        await navigator.share(shareData);
+        await navigator.share({
+          title: 'পুনর্মিলনী ২০২৭ - এসএসসি ব্যাচ ২০১৪',
+          text: shareText,
+          url: window.location.origin
+        });
       } catch (err) {
-        console.log('Share dismissed');
+        console.log('Share closed');
       }
     } else {
-      navigator.clipboard.writeText(`${shareData.text} \nডাউনলোড লিংক: ${window.location.href}`);
-      alert('অ্যাপের লিংক ও দাওয়াত কপি করা হয়েছে! বন্ধুদের হোয়াটসঅ্যাপ বা মেসেঞ্জারে পাঠিয়ে দিন।');
+      navigator.clipboard.writeText(shareText);
+      alert('অ্যাপের লিংক ও দাওয়াত কপি করা হয়েছে! বন্ধুদের হোয়াটসঅ্যাপ বা ফেসবুকে মেসেজ পাঠিয়ে দিন।');
     }
   };
 
   const filteredMembers = members.filter(m => {
     return m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-           m.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           m.phone.includes(searchQuery);
+           m.area.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
   return (
@@ -261,52 +398,95 @@ export default function App() {
       backgroundColor: '#F0F4F2',
       minHeight: '100vh',
       color: '#1A2E22',
-      paddingBottom: '80px',
+      paddingBottom: '85px',
       margin: 0
     }}>
-      
-      {/* ১. প্রিমিয়াম হেডার ব্যানার */}
+
+      {/* ======================================================== */}
+      {/* 🔔 লাইভ ড্রপ-ডাউন নোটিফিকেশন ব্যানার (WhatsApp Pop-up) */}
+      {/* ======================================================== */}
+      {activeToast && (
+        <div style={{
+          position: 'fixed',
+          top: '12px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '92%',
+          maxWidth: '480px',
+          backgroundColor: '#0F172A',
+          color: '#FFFFFF',
+          padding: '12px 16px',
+          borderRadius: '16px',
+          boxShadow: '0 10px 28px rgba(0,0,0,0.4)',
+          zIndex: 999999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          border: '1.5px solid #10B981',
+          animation: 'slideDown 0.3s ease-out'
+        }}>
+          <div style={{ fontSize: '24px' }}>{activeToast.icon}</div>
+          <div style={{ flex: 1, overflow: 'hidden' }}>
+            <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', color: '#38BDF8', fontWeight: '800' }}>
+              {activeToast.title}
+            </h5>
+            <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeToast.body}
+            </p>
+          </div>
+          <button onClick={() => setActiveToast(null)} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>✕</button>
+        </div>
+      )}
+
+      {/* ১. বন্ধুদের ছবির ব্যাকগ্রাউন্ড সহ প্রিমিয়াম হেডার ব্যানার */}
       <header style={{
-        background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 60%, #083E24 100%)',
+        backgroundImage: `linear-gradient(135deg, rgba(10, 77, 46, 0.86) 0%, rgba(19, 117, 71, 0.88) 60%, rgba(8, 62, 36, 0.92) 100%), url('/header-bg.jpg')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
         color: '#FFFFFF',
-        padding: '20px 16px 14px 16px',
+        padding: '24px 16px 18px 16px',
         textAlign: 'center',
-        boxShadow: '0 4px 16px rgba(10, 77, 46, 0.25)',
+        borderBottomLeftRadius: '24px',
+        borderBottomRightRadius: '24px',
+        boxShadow: '0 6px 20px rgba(10, 77, 46, 0.3)',
         position: 'relative'
       }}>
         <div style={{ maxWidth: '520px', margin: '0 auto' }}>
           <span style={{
             fontSize: '11px',
-            backgroundColor: 'rgba(212, 175, 55, 0.25)',
-            color: '#FDE68A',
-            padding: '4px 12px',
+            backgroundColor: 'rgba(212, 175, 55, 0.35)',
+            color: '#FEF08A',
+            padding: '5px 14px',
             borderRadius: '20px',
-            border: '1px solid rgba(212, 175, 55, 0.4)',
-            fontWeight: '700'
+            border: '1px solid rgba(212, 175, 55, 0.5)',
+            fontWeight: '800',
+            letterSpacing: '0.5px'
           }}>
             সান্দিকোনা স্কুল এন্ড কলেজ
           </span>
-          <h1 style={{ fontSize: '24px', margin: '8px 0 2px 0', fontWeight: '800' }}>
+          <h1 style={{ fontSize: '26px', margin: '8px 0 2px 0', fontWeight: '900', textShadow: '0 2px 6px rgba(0,0,0,0.4)' }}>
             পুনর্মিলনী ২০২৭
           </h1>
-          <p style={{ fontSize: '13px', margin: 0, opacity: 0.95, fontWeight: '600' }}>
-            শুধুমাত্র এসএসসি ব্যাচ ২০১৪
+          <p style={{ fontSize: '14px', margin: 0, opacity: 0.95, fontWeight: '700', textShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>
+            এসএসসি ব্যাচ ২০১৪
           </p>
           <div style={{
-            marginTop: '6px',
+            marginTop: '8px',
             display: 'inline-block',
-            backgroundColor: 'rgba(0, 0, 0, 0.2)',
-            padding: '3px 12px',
+            backgroundColor: 'rgba(0, 0, 0, 0.35)',
+            padding: '4px 14px',
             borderRadius: '12px',
             fontSize: '11px',
-            color: '#E2E8F0'
+            color: '#F1F5F9',
+            fontWeight: '600'
           }}>
-            🤝 আয়োজনে: এসএসসি ২০১৪ ব্যাচ
+            🤝 আয়োজনে: এসএসসি ২০১৪ ব্যাচ পুনর্মিলনী পরিষদ
           </div>
         </div>
       </header>
 
-      {/* ২. লাইভ স্ক্রলিং এনাউন্সমেন্ট বার (ব্রেকিং নিউজ টিকার) */}
+      {/* ২. লাইভ স্ক্রলিং নোটিশ (ব্রেকিং নিউজ স্টাইল) */}
       <div style={{
         backgroundColor: '#0F172A',
         color: '#F8FAFC',
@@ -324,10 +504,7 @@ export default function App() {
           padding: '3px 8px',
           borderRadius: '4px',
           marginRight: '10px',
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px'
+          flexShrink: 0
         }}>
           📢 নোটিশ:
         </span>
@@ -344,58 +521,31 @@ export default function App() {
         {/* ক. ড্যাশবোর্ড ট্যাব */}
         {activeTab === 'home' && (
           <div>
-            {/* এসএসসি ২০১৪ লাইভ নিবন্ধিত কাউন্টার */}
-            <div style={{
-              background: '#FFFFFF',
-              padding: '18px',
-              borderRadius: '20px',
-              border: '1px solid #BBF7D0',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.03)',
-              textAlign: 'center',
-              marginBottom: '14px'
-            }}>
+            {/* ক্লিক করলেই সহপাঠী তালিকায় যাওয়ার কাউন্টার কার্ড */}
+            <div 
+              onClick={() => setActiveTab('directory')}
+              title="সহপাঠীদের তালিকা দেখতে চাপ দিন"
+              style={{
+                background: '#FFFFFF',
+                padding: '18px',
+                borderRadius: '20px',
+                border: '2px solid #BBF7D0',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.04)',
+                textAlign: 'center',
+                marginBottom: '14px',
+                cursor: 'pointer'
+              }}
+            >
               <span style={{ fontSize: '13px', color: '#137547', fontWeight: '700' }}>এসএসসি ব্যাচ ২০১৪</span>
-              <h2 style={{ fontSize: '32px', margin: '6px 0 2px 0', color: '#0A4D2E', fontWeight: '800' }}>
+              <h2 style={{ fontSize: '34px', margin: '4px 0', color: '#0A4D2E', fontWeight: '900' }}>
                 {isLoading ? '...' : `${members.length} জন`}
               </h2>
-              <span style={{ fontSize: '11px', color: '#64748B' }}>সরাসরি নিবন্ধিত সহপাঠী বন্ধু</span>
+              <span style={{ fontSize: '12px', color: '#0284C7', fontWeight: '700', textDecoration: 'underline' }}>
+                👉 তালিকা দেখতে এখানে ক্লিক করুন
+              </span>
             </div>
 
-            {/* বন্ধুদের সাথে অ্যাপ শেয়ার কার্ড */}
-            <div style={{
-              background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
-              color: '#FFFFFF',
-              padding: '16px',
-              borderRadius: '18px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: '14px',
-              boxShadow: '0 4px 14px rgba(15,23,42,0.15)'
-            }}>
-              <div>
-                <h4 style={{ margin: 0, fontSize: '14px', color: '#38BDF8' }}>📲 বন্ধুদের অ্যাপটি শেয়ার করুন</h4>
-                <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#CBD5E1' }}>হোয়াটসঅ্যাপ, ফেসবুক ও মেসেঞ্জারে লিংক পাঠান</p>
-              </div>
-              <button
-                onClick={handleShareApp}
-                style={{
-                  background: '#25D366',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  padding: '10px 16px',
-                  borderRadius: '12px',
-                  fontSize: '12px',
-                  fontWeight: '700',
-                  cursor: 'pointer',
-                  flexShrink: 0
-                }}
-              >
-                শেয়ার করুন
-              </button>
-            </div>
-
-            {/* ইভেন্ট বিবরণী */}
+            {/* ইভেন্ট বিবরণী কার্ড */}
             <div style={{
               background: '#FFFFFF',
               padding: '20px',
@@ -430,22 +580,23 @@ export default function App() {
                   borderRadius: '14px',
                   fontWeight: '700',
                   fontSize: '14px',
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(10, 77, 46, 0.2)'
                 }}
               >
-                📝 এখনই নিজের নাম নিবন্ধন করুন
+                📝 রেজিস্ট্রেশন ফরম পূরণ করুন
               </button>
             </div>
           </div>
         )}
 
-        {/* খ. সহপাঠী ডিরেক্টরি ট্যাব */}
+        {/* খ. সহপাঠী ডিরেক্টরি ট্যাব (পাবলিক থেকে ফোন নম্বর ও হোয়াটসঅ্যাপ ১০০% গোপন) */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '12px' }}>
               <input
                 type="text"
-                placeholder="🔍 নাম, এলাকা বা ফোন দিয়ে খুঁজুন..."
+                placeholder="🔍 সহপাঠীর নাম বা এলাকা দিয়ে খুঁজুন..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
@@ -462,7 +613,7 @@ export default function App() {
             </div>
 
             <div style={{ fontSize: '12px', color: '#137547', fontWeight: '700', marginBottom: '10px' }}>
-              মোট সহপাঠী: {filteredMembers.length} জন
+              মোট নিবন্ধিত বন্ধু: {filteredMembers.length} জন
             </div>
 
             {filteredMembers.length === 0 ? (
@@ -483,42 +634,13 @@ export default function App() {
                     <div>
                       <h4 style={{ margin: '0 0 2px 0', fontSize: '15px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
                       <p style={{ margin: 0, fontSize: '12px', color: '#137547', fontWeight: '600' }}>
-                        এসএসসি ২০১৪ • <span style={{ color: '#64748B', fontWeight: '400' }}>{m.area}</span>
+                        এসএসসি ২০১৪ • <span style={{ color: '#64748B', fontWeight: '400' }}>📍 {m.area}</span>
                       </p>
-                      <span style={{ fontSize: '11px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
+                      <span style={{ fontSize: '11px', color: '#94A3B8' }}>জার্সি সাইজ: <strong>{m.tshirt}</strong></span>
                     </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <a
-                        href={`tel:${m.phone}`}
-                        style={{
-                          background: '#DCFCE7',
-                          color: '#137547',
-                          textDecoration: 'none',
-                          padding: '8px 12px',
-                          borderRadius: '10px',
-                          fontSize: '12px',
-                          fontWeight: '700'
-                        }}
-                      >
-                        📞 কল
-                      </a>
-                      <a
-                        href={`https://wa.me/88${m.phone.replace(/[^\d]/g, '')}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          background: '#25D366',
-                          color: '#FFFFFF',
-                          textDecoration: 'none',
-                          padding: '8px 12px',
-                          borderRadius: '10px',
-                          fontSize: '12px',
-                          fontWeight: '700'
-                        }}
-                      >
-                        WhatsApp
-                      </a>
-                    </div>
+                    <span style={{ background: '#DCFCE7', color: '#15803d', fontSize: '11px', padding: '4px 10px', borderRadius: '8px', fontWeight: '700' }}>
+                      ✓ নিবন্ধিত
+                    </span>
                   </div>
                 ))}
               </div>
@@ -526,7 +648,7 @@ export default function App() {
           </div>
         )}
 
-        {/* গ. এসএসসি ২০১৪ রেজিস্ট্রেশন ফরম */}
+        {/* গ. রেজিস্ট্রেশন ফরম */}
         {activeTab === 'register' && (
           <div style={{ background: '#FFFFFF', padding: '20px', borderRadius: '20px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.03)' }}>
             <h3 style={{ margin: '0 0 4px 0', color: '#0A4D2E', fontSize: '18px', fontWeight: '700' }}>📝 এসএসসি ২০১৪ নিবন্ধন ফরম</h3>
@@ -577,7 +699,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ঘ. হোয়াটসঅ্যাপ স্টাইল আড্ডা (অডিও/ভিডিও কল ও ফটো/ভিডিও আপলোড সহ) */}
+        {/* ঘ. হোয়াটসঅ্যাপ স্টাইল আড্ডা (স্থায়ী লগইন, ইন-অ্যাপ কল ও ফাইল আপলোড/ডাউনলোড) */}
         {activeTab === 'chat' && (
           <div style={{
             background: '#EFEAE2',
@@ -604,23 +726,25 @@ export default function App() {
                 </div>
                 <div>
                   <h4 style={{ margin: 0, fontSize: '14px', fontWeight: '700' }}>এসএসসি ২০১৪ আড্ডা</h4>
-                  <span style={{ fontSize: '10px', color: '#D1FAE5' }}>অনলাইন গ্রুপ কল ও চ্যাট</span>
+                  <span style={{ fontSize: '10px', color: '#D1FAE5' }}>
+                    {typingUser ? `✍️ ${typingUser} টাইপ করছেন...` : 'অনলাইন আড্ডা রুম'}
+                  </span>
                 </div>
               </div>
 
-              {/* কলিং বাটনসমূহ (অডিও ও ভিডিও কল) */}
+              {/* ইন-অ্যাপ কলিং বাটন (অডিও ও ভিডিও) */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
                   onClick={() => setCallingMode('audio')}
-                  title="১০০ জনের অডিও কল"
-                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#FFFFFF', padding: '6px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
+                  title="ইন-অ্যাপ অডিও কল"
+                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#FFFFFF', padding: '6px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                 >
                   📞 অডিও
                 </button>
                 <button
                   onClick={() => setCallingMode('video')}
-                  title="১০০ জনের ভিডিও কল"
-                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#FFFFFF', padding: '6px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '13px' }}
+                  title="ইন-অ্যাপ ভিডিও কল"
+                  style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#FFFFFF', padding: '6px 10px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                 >
                   📹 ভিডিও
                 </button>
@@ -632,12 +756,12 @@ export default function App() {
                 <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#25D366', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', color: 'white', marginBottom: '10px' }}>
                   💬
                 </div>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '16px' }}>আড্ডায় যুক্ত হতে আপনার নাম দিন</h4>
-                <p style={{ fontSize: '12px', color: '#64748B', margin: '0 0 16px 0' }}>নামটি দিয়ে প্রবেশ করলেই সবার সাথে চ্যাট ও ফটো শেয়ার করতে পারবেন।</p>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '16px' }}>আড্ডায় প্রবেশ করতে নাম দিন</h4>
+                <p style={{ fontSize: '12px', color: '#64748B', margin: '0 0 16px 0' }}>একবার নাম লিখলেই এই ডিভাইসে স্থায়ীভাবে সেভ থাকবে।</p>
                 <form onSubmit={(e) => {
                   e.preventDefault();
                   if (chatUser.trim()) {
-                    localStorage.setItem('sandikona_chat_username', chatUser.trim());
+                    localStorage.setItem('sandikona_user_name', chatUser.trim());
                     setIsJoinedChat(true);
                   }
                 }} style={{ width: '100%', maxWidth: '280px' }}>
@@ -656,7 +780,7 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* মেসেজ তালিকা ভিউপোর্ট */}
+                {/* মেসেজ তালিকা ভিউপোর্ট (নিচমুখী স্ক্রলিং) */}
                 <div style={{ flex: 1, padding: '12px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {chatMessages.map((m) => {
                     const isMe = m.sender === chatUser;
@@ -676,26 +800,38 @@ export default function App() {
                           </span>
                         )}
 
-                        {/* যদি কোনো ছবি থাকে */}
+                        {/* ছবি প্রদর্শন ও ডাউনলোড */}
                         {m.fileUrl && m.fileType?.startsWith('image') && (
-                          <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', marginBottom: '4px', display: 'block' }} />
+                          <div style={{ marginBottom: '4px' }}>
+                            <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', display: 'block' }} />
+                            <a href={m.fileUrl} download={m.fileName || "image.jpg"} style={{ display: 'inline-block', fontSize: '10px', color: '#0284C7', marginTop: '4px', textDecoration: 'none', fontWeight: 'bold' }}>
+                              ⬇️ ছবি ডাউনলোড করুন
+                            </a>
+                          </div>
                         )}
 
-                        {/* যদি কোনো ভিডিও থাকে */}
+                        {/* ভিডিও প্রদর্শন ও ডাউনলোড */}
                         {m.fileUrl && m.fileType?.startsWith('video') && (
-                          <video src={m.fileUrl} controls style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', marginBottom: '4px', display: 'block' }} />
+                          <div style={{ marginBottom: '4px' }}>
+                            <video src={m.fileUrl} controls style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '8px', display: 'block' }} />
+                            <a href={m.fileUrl} download={m.fileName || "video.mp4"} style={{ display: 'inline-block', fontSize: '10px', color: '#0284C7', marginTop: '4px', textDecoration: 'none', fontWeight: 'bold' }}>
+                              ⬇️ ভিডিও ডাউনলোড করুন
+                            </a>
+                          </div>
                         )}
 
-                        {/* যদি অন্যান্য ফাইল হয় */}
+                        {/* অন্যান্য ফাইল ডাউনলোড */}
                         {m.fileUrl && !m.fileType?.startsWith('image') && !m.fileType?.startsWith('video') && (
-                          <a href={m.fileUrl} download="shared-file" style={{ display: 'inline-block', fontSize: '11px', color: '#0284C7', marginBottom: '4px', textDecoration: 'underline' }}>
-                            📎 ফাইল ডাউনলোড করুন
+                          <a href={m.fileUrl} download={m.fileName || "file"} style={{ display: 'inline-block', fontSize: '11px', color: '#0284C7', margin: '4px 0', textDecoration: 'underline', fontWeight: 'bold' }}>
+                            ⬇️ {m.fileName || 'ফাইলটি ডাউনলোড করুন'}
                           </a>
                         )}
 
                         {m.text && <p style={{ margin: 0, fontSize: '13px', color: '#1E293B', wordBreak: 'break-word' }}>{m.text}</p>}
-                        <span style={{ fontSize: '9px', color: '#94A3B8', float: 'right', marginTop: '3px', marginLeft: '8px' }}>
-                          {m.time} {isMe ? '✓✓' : ''}
+                        
+                        <span style={{ fontSize: '9px', color: '#94A3B8', float: 'right', marginTop: '3px', marginLeft: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                          <span>{m.time}</span>
+                          <span style={{ color: '#34B7F1', fontWeight: 'bold' }}>✓✓</span>
                         </span>
                       </div>
                     );
@@ -703,11 +839,11 @@ export default function App() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* ফাইল সিলেক্ট প্রিভিউ বক্স */}
+                {/* ফাইল সিলেক্ট প্রিভিউ বার */}
                 {attachedFile && (
                   <div style={{ padding: '6px 12px', background: '#F1F5F9', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '11px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '250px' }}>
-                      📎 প্রস্তুত ফাইল: {attachedFile.name}
+                      📎 নির্বাচিত: {attachedFile.name}
                     </span>
                     <button onClick={() => { setAttachedFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>
                       বাতিল
@@ -715,7 +851,7 @@ export default function App() {
                   </div>
                 )}
 
-                {/* হোয়াটসঅ্যাপ স্টাইল ইনপুট ও অ্যাটাচমেন্ট বার */}
+                {/* হোয়াটসঅ্যাপ স্টাইল ইনপুট বক্স */}
                 <form onSubmit={handleSendChat} style={{ display: 'flex', alignItems: 'center', padding: '8px', background: '#F0F2F5', borderTop: '1px solid #CBD5E1', gap: '6px' }}>
                   <input
                     type="file"
@@ -727,7 +863,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    title="ছবি বা ভিডিও সংযুক্ত করুন"
+                    title="ছবি বা ফাইল সংযুক্ত করুন"
                     style={{ border: 'none', background: '#E2E8F0', padding: '8px 10px', borderRadius: '50%', cursor: 'pointer', fontSize: '16px' }}
                   >
                     📎
@@ -737,7 +873,7 @@ export default function App() {
                     type="text"
                     placeholder="মেসেজ লিখুন..."
                     value={msgInput}
-                    onChange={e => setMsgInput(e.target.value)}
+                    onChange={handleInputChange}
                     style={{ flex: 1, padding: '10px 14px', borderRadius: '24px', border: '1px solid #CBD5E1', fontSize: '13px', outline: 'none', background: '#FFFFFF' }}
                   />
                   <button type="submit" style={{ background: '#075E54', color: '#FFFFFF', border: 'none', width: '38px', height: '38px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
@@ -751,37 +887,73 @@ export default function App() {
 
       </main>
 
-      {/* ৪. অডিও / ভিডিও লাইভ কলিং মোডাল */}
+      {/* ৪. ইন-অ্যাপ লাইভ কলিং ওভারলে স্ক্রিন (কোনো আলাদা অ্যাপ লাগবে না) */}
       {callingMode !== 'none' && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.92)', zIndex: 10000, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '12px 16px', background: '#0F172A', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '14px', fontWeight: '700' }}>
-              {callingMode === 'video' ? '📹 এসএসসি ২০১৪ লাইভ ভিডিও রুম' : '📞 এসএসসি ২০১৪ লাইভ অডিও রুম'}
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#000000', zIndex: 10000, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '10px 14px', background: '#075E54', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', fontWeight: '700' }}>
+              {callingMode === 'video' ? '📹 এসএসসি ২০১৪ ভিডিও আড্ডা' : '📞 এসএসসি ২০১৪ অডিও আড্ডা'}
             </span>
             <button
               onClick={() => setCallingMode('none')}
-              style={{ background: '#DC2626', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}
+              style={{ background: '#DC2626', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer', fontSize: '12px' }}
             >
-              কল শেষ করুন
+              কল কাটুন ✕
             </button>
           </div>
           <iframe
-            src={`https://meet.jit.si/SandikonaSSC2014Conference#config.startWithVideoMuted=${callingMode === 'audio'}&config.prejoinPageEnabled=false`}
+            src={`https://meet.jit.si/SandikonaSSC2014CallSession#config.startWithVideoMuted=${callingMode === 'audio'}&config.prejoinPageEnabled=false`}
             allow="microphone; camera; autoplay; display-capture"
             style={{ width: '100%', flex: 1, border: 'none' }}
-            title="SSC 2014 Live Call"
+            title="SSC 2014 In-App Call"
           />
         </div>
       )}
 
-      {/* ৫. ফুটার (এখানে ৩ বার টাচ করলে গোপন অ্যাডমিন প্যানেল খুলবে) */}
+      {/* ৫. সর্বজনীন অ্যাপ শেয়ার বাটন ও ফুটার (সবার নিচে থাকবে) */}
       <footer style={{ maxWidth: '520px', margin: '14px auto', padding: '0 16px' }}>
+        
+        {/* বড় শেয়ার বাটন */}
+        <div style={{
+          background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+          color: '#FFFFFF',
+          padding: '16px',
+          borderRadius: '18px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '12px',
+          boxShadow: '0 4px 14px rgba(15,23,42,0.15)'
+        }}>
+          <div>
+            <h4 style={{ margin: 0, fontSize: '14px', color: '#38BDF8' }}>📲 বন্ধুদের সাথে অ্যাপটি শেয়ার করুন</h4>
+            <p style={{ margin: '3px 0 0 0', fontSize: '11px', color: '#CBD5E1' }}>হোয়াটসঅ্যাপ বা ফেসবুকে লিংক পাঠিয়ে দিন</p>
+          </div>
+          <button
+            onClick={handleShareApp}
+            style={{
+              background: '#25D366',
+              color: '#FFFFFF',
+              border: 'none',
+              padding: '10px 16px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              flexShrink: 0
+            }}
+          >
+            শেয়ার করুন
+          </button>
+        </div>
+
+        {/* অ্যাপ ক্রিয়েটর ক্রেডিট (এখানে ৩ বার চাপলে গোপন অ্যাডমিন প্যানেল খুলবে) */}
         <div 
           onClick={handleAdminTrigger}
           style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '16px', padding: '12px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer', userSelect: 'none' }}
         >
           <p style={{ margin: '0 0 3px 0', fontSize: '12px', color: '#137547', fontWeight: '700' }}>
-            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান (লুকানো অ্যাডমিন)
+            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান
           </p>
           <p style={{ margin: '2px 0', fontSize: '11px', color: '#334155' }}>
             সরাসরি যোগাযোগ: <a href="tel:01705374798" style={{ color: '#0A4D2E', fontWeight: '700', textDecoration: 'none' }}>01705374798</a>
@@ -797,7 +969,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* ৬. প্রিমিয়াম বটম বার (অডিও ট্যাব বাদ দিয়ে সহজ ৪টি বাটন) */}
+      {/* ৬. বটম ন্যাভিগেশন বার */}
       <nav style={{
         position: 'fixed',
         bottom: 0,
@@ -834,7 +1006,7 @@ export default function App() {
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '20px', width: '100%', maxWidth: '460px', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '17px', fontWeight: '700' }}>👑 গোপন অ্যাডমিন কন্ট্রোল</h3>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '17px', fontWeight: '700' }}>👑 অ্যাডমিন কন্ট্রোল প্যানেল</h3>
               <button onClick={() => { setShowAdmin(false); setIsAdminLoggedIn(false); setAdminPin(''); }} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 10px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
             </div>
 
@@ -865,8 +1037,8 @@ export default function App() {
             ) : (
               <div>
                 {/* লাইভ এনাউন্সমেন্ট নোটিশ এডিটর */}
-                <div style={{ background: '#F1F5F9', padding: '14px', borderRadius: '14px', marginBottom: '16px' }}>
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#0F172A' }}>📢 লাইভ স্ক্রলিং নোটিশ আপডেট করুন:</h4>
+                <div style={{ background: '#F1F5F9', padding: '12px', borderRadius: '14px', marginBottom: '16px' }}>
+                  <h4 style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট করুন:</h4>
                   <textarea
                     rows={2}
                     placeholder="নতুন নোটিশ এখানে লিখুন..."
@@ -901,19 +1073,30 @@ export default function App() {
                   </button>
                 </div>
 
+                {/* অ্যাডমিন মেম্বার লিস্ট (কল, হোয়াটসঅ্যাপ ও ডিলিট বাটন) */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {members.map((m, idx) => (
                     <div key={m.id} style={{ padding: '10px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0', fontSize: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <strong>{idx + 1}. {m.name} (এসএসসি ১৪)</strong>
                         <span style={{ color: '#0A4D2E', fontWeight: '700' }}>জার্সি: {m.tshirt}</span>
                       </div>
                       <div style={{ color: '#475569', marginTop: '3px' }}>
                         মোবাইল: <a href={`tel:${m.phone}`} style={{ color: '#0284C7', fontWeight: '700' }}>{m.phone}</a> | {m.area}
                       </div>
-                      <div style={{ marginTop: '6px', display: 'flex', gap: '8px' }}>
-                        <a href={`tel:${m.phone}`} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#137547', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>📞 কল</a>
-                        <a href={`https://wa.me/88${m.phone.replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: '#FFFFFF', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>💬 হোয়াটসঅ্যাপ</a>
+                      
+                      {/* অ্যাডমিন অ্যাকশন বাটনসমূহ */}
+                      <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <a href={`tel:${m.phone}`} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#137547', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>📞 কল</a>
+                          <a href={`https://wa.me/88${m.phone.replace(/[^\d]/g, '')}`} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', background: '#25D366', color: '#FFFFFF', padding: '4px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '700' }}>💬 হোয়াটসঅ্যাপ</a>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteMember(m.id, m.name)}
+                          style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                        >
+                          🗑️ বাদ দিন
+                        </button>
                       </div>
                     </div>
                   ))}
