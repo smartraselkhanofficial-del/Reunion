@@ -35,11 +35,15 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      - name: Build Debug APK
-        working-directory: android- name: Auto Increment Version Code
+      - name: Auto Increment Version Code
         run: |
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
-        run: ./gradlew assembleDebug
+
+      - name: Build Debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
