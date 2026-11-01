@@ -1,4 +1,4 @@
-name: Build Android APK (Reunion 2027)
+name: Build Android App (Release & Update Ready)
 
 on:
   push:
@@ -35,35 +35,40 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      - name: Inject Android Permissions & Permanent Keystore
+      - name: Configure Permanent Release Key & Permissions
         run: |
-          # ১. সব পারমিশন AndroidManifest.xml ফাইলে ইনজেক্ট করা
+          # অ্যান্ড্রয়েড পারমিশন ইনজেকশন
           sed -i '/<\/manifest>/i \
               <uses-permission android:name="android.permission.INTERNET" />\
               <uses-permission android:name="android.permission.CAMERA" />\
               <uses-permission android:name="android.permission.RECORD_AUDIO" />\
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
               <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\
-              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
-              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />\
-              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml || true
+              <uses-permission android:name="android.permission.VIBRATE" />\
+              <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml || true
 
-          # ২. অটো ভার্সন বৃদ্ধি
+          # ভার্সন কোড বৃদ্ধি
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
 
-          # ৩. স্থায়ী কি-স্টোর তৈরি যাতে পুরনো অ্যাপ না মুছেই আপডেট হয়
-          keytool -genkey -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sandikona2027,O=Alumni,C=BD" || true
+          # স্থায়ী ইউনিক রিলিজ কি-স্টোর তৈরি (একই কি থাকবে সবসময়)
+          keytool -genkeypair -v -storetype PKCS12 -keystore android/app/sandikona_release.keystore -storepass Sandikona2027Pass -alias sandikona_key -keypass Sandikona2027Pass -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart Rasel Khan, OU=Reunion2027, O=Sandikona School, L=Kendua, ST=Netrokona, C=BD" || true
 
-      - name: Build Debug APK
+      - name: Build Signed APK & Play Store Bundle (AAB)
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
+          # প্লে স্টোরে আপলোডের জন্য AAB ফাইলও তৈরি হবে
+          ./gradlew bundleRelease || true
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Reunion-2027-Debug-APK
+          name: Reunion-2027-Official-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Play Store AAB Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reunion-2027-PlayStore-AAB
+          path: android/app/build/outputs/bundle/release/app-release.aab
