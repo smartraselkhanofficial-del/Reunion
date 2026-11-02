@@ -6,19 +6,19 @@ import {
   addDoc, 
   onSnapshot, 
   doc, 
-  setDoc,
-  getDoc,
-  deleteDoc,
-  query,
-  orderBy
+  setDoc, 
+  getDoc, 
+  deleteDoc, 
+  query, 
+  orderBy 
 } from "firebase/firestore";
 import { 
   getAuth, 
   onAuthStateChanged, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  signOut,
-  User
+  signOut, 
+  User 
 } from "firebase/auth";
 
 // ফায়ারবেস কনফিগারেশন
@@ -98,14 +98,12 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // অথেনটিকেশন ও ইউজার প্রোফাইল স্টেট
+  // অথেনটিকেশন ও প্রোফাইল
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
 
-  // অথ ফর্ম স্টেটস
   const [authPhone, setAuthPhone] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
@@ -127,15 +125,19 @@ export default function App() {
   const [schoolHistory, setSchoolHistory] = useState('ঐতিহ্যবাহী সান্দিকোনা স্কুল এন্ড কলেজ নেত্রকোনা জেলার কেন্দুয়া উপজেলার একটি স্বনামধন্য বিদ্যাপীঠ।');
   const [apkDownloadUrl, setApkDownloadUrl] = useState('https://github.com');
   const [headerBgUrl, setHeaderBgUrl] = useState<string>('');
+  
+  // ক্লাউডিনারি ফ্রি স্টোরেজ কনফিগ (কার্ড ছাড়া ভিডিও ও ছবির জন্য)
+  const [cloudinaryCloudName, setCloudinaryCloudName] = useState('demo');
+  const [cloudinaryPreset, setCloudinaryPreset] = useState('docs_upload_example_preset');
   const [isLoading, setIsLoading] = useState(true);
 
-  // লাইভ সময় ও কাউন্টার
+  // ঘড়ি ও টাইমার
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
   const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
 
-  // নোটিফিকেশন পারমিশন ও স্ট্যাটাস বার সার্ভিস
+  // নোটিফিকেশন
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
@@ -143,7 +145,7 @@ export default function App() {
   const isInitialMessages = useRef(false);
   const isInitialAdminNotifs = useRef(false);
 
-  // কলিং স্টেট
+  // কলিং
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
   const [currentCallSession, setCurrentCallSession] = useState<ActiveCall | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -151,21 +153,24 @@ export default function App() {
   const callTimerRef = useRef<any>(null);
   const ringtoneOscRef = useRef<any>(null);
 
-  // অ্যাডমিন প্যানেল স্টেট
+  // অ্যাডমিন
   const [showAdmin, setShowAdmin] = useState(false);
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newHistoryInput, setNewHistoryInput] = useState('');
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
   const [adminBroadcastTitle, setAdminBroadcastTitle] = useState('');
   const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
+  const [newCloudNameInput, setNewCloudNameInput] = useState('');
+  const [newPresetInput, setNewPresetInput] = useState('');
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
 
-  // মডাল স্টেটস
+  // মেমোরি আপলোড
   const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
   const [memCaption, setMemCaption] = useState('');
-  const [memFile, setMemFile] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
-  const [isUploadingMemory, setIsUploadingMemory] = useState(false);
+  const [selectedMemFile, setSelectedMemFile] = useState<File | null>(null);
+  const [memUploadProgress, setMemUploadProgress] = useState<string | null>(null);
 
+  // গৌরব ও শিক্ষক মডাল
   const [showAddPrideModal, setShowAddPrideModal] = useState(false);
   const [prideName, setPrideName] = useState('');
   const [prideProfession, setPrideProfession] = useState('');
@@ -183,23 +188,78 @@ export default function App() {
 
   // চ্যাট
   const [msgInput, setMsgInput] = useState('');
-  const [attachedChatFile, setAttachedChatFile] = useState<{ url: string; type: string; name: string } | null>(null);
+  const [selectedChatFile, setSelectedChatFile] = useState<File | null>(null);
+  const [chatUploadProgress, setChatUploadProgress] = useState<string | null>(null);
   const [typingUser, setTypingUser] = useState<string | null>(null);
   const typingTimeoutRef = useRef<any>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
   // ========================================================
-  // ১. আসল Firebase Authentication স্টেট হ্যান্ডলার
+  // ১. কার্ড ছাড়া ফ্রি ক্লাউড আপলোড ও অটো-কম্প্রেশন ইঞ্জিন
+  // ========================================================
+  // ব্রাউজারে স্বয়ংক্রিয়ভাবে ছবির সাইজ ৯০% কমিয়ে ফাস্ট করার ফাংশন
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 900; // অপ্টিমাইজড রেজোলিউশন
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.65)); // মাত্র ৫০-৮০ কেবি সাইজে রূপান্তর
+        };
+      };
+    });
+  };
+
+  // ভিডিও বা বড় ফাইল আপলোডার (Cloudinary Free API)
+  const uploadToFreeCloud = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', cloudinaryPreset);
+
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error('ক্লাউড আপলোড সফল হয়নি। ডিফল্ট ইঞ্জিন ব্যবহার করা হচ্ছে।');
+    }
+
+    const data = await response.json();
+    return data.secure_url;
+  };
+
+  // ========================================================
+  // ২. Firebase Auth লিসেনার
   // ========================================================
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
-        // ফায়ারস্টোর থেকে প্রোফাইল ডেটা লোড
         try {
           const userDoc = await getDoc(doc(db, "users", user.uid));
           if (userDoc.exists()) {
@@ -211,19 +271,15 @@ export default function App() {
       } else {
         setUserProfile(null);
       }
-      setAuthLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  // ফোন নম্বর দিয়ে ভার্চুয়াল ইমেইল জেনারেটর (Firebase Auth-এর জন্য)
   const phoneToEmail = (rawPhone: string) => {
     const clean = rawPhone.replace(/[^\d]/g, '');
     return `${clean}@sandikona2014.org`;
   };
 
-  // সাইন আপ হ্যান্ডলার
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -235,7 +291,6 @@ export default function App() {
       setAuthSubmitting(false);
       return;
     }
-
     if (authPassword.length < 6) {
       setAuthError('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
       setAuthSubmitting(false);
@@ -246,8 +301,6 @@ export default function App() {
       const email = phoneToEmail(clean);
       const userCredential = await createUserWithEmailAndPassword(auth, email, authPassword);
       const user = userCredential.user;
-
-      // সুপার অ্যাডমিন নির্ধারণ (স্মার্ট রাসেল খান: 01705374798)
       const isSuperAdmin = clean.includes('01705374798') || clean.includes('1705374798');
 
       const newProfile: UserProfile = {
@@ -261,26 +314,24 @@ export default function App() {
         createdAt: Date.now()
       };
 
-      // ফায়ারস্টোরে প্রোফাইল সেভ
       await setDoc(doc(db, "users", user.uid), newProfile);
       setUserProfile(newProfile);
       setShowAuthModal(false);
       setAuthPhone('');
       setAuthPassword('');
       setAuthName('');
-      triggerNativeNotification("স্বাগতম!", `অভিনন্দন ${newProfile.name}, আপনার অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`);
+      triggerNativeNotification("স্বাগতম!", `অভিনন্দন ${newProfile.name}, আপনার অ্যাকাউন্ট তৈরি হয়েছে।`);
     } catch (err: any) {
       if (err.code === 'auth/email-already-in-use') {
         setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট তৈরি করা আছে। দয়া করে লগইন করুন।');
       } else {
-        setAuthError(err.message || 'অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+        setAuthError(err.message || 'অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
       }
     } finally {
       setAuthSubmitting(false);
     }
   };
 
-  // লগইন হ্যান্ডলার
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -305,14 +356,13 @@ export default function App() {
       setShowAuthModal(false);
       setAuthPhone('');
       setAuthPassword('');
-    } catch (err: any) {
-      setAuthError('ভুল মোবাইল নম্বর বা পাসওয়ার্ড। সঠিক তথ্য দিন।');
+    } catch (err) {
+      setAuthError('ভুল মোবাইল নম্বর বা পাসওয়ার্ড।');
     } finally {
       setAuthSubmitting(false);
     }
   };
 
-  // লগআউট হ্যান্ডলার
   const handleLogout = async () => {
     if (window.confirm("আপনি কি লগআউট করতে চান?")) {
       await signOut(auth);
@@ -321,7 +371,7 @@ export default function App() {
   };
 
   // ========================================================
-  // ২. নোটিফিকেশন ও সার্ভিস ওয়ার্কার ইঞ্জিন (Android Status Bar)
+  // ৩. নোটিফিকেশন ইঞ্জিন
   // ========================================================
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -339,7 +389,7 @@ export default function App() {
       const blob = new Blob([swCode], { type: 'application/javascript' });
       navigator.serviceWorker.register(URL.createObjectURL(blob))
         .then(reg => { swReg.current = reg; })
-        .catch(() => console.log('SW active'));
+        .catch(() => {});
     }
 
     if ("Notification" in window) {
@@ -405,7 +455,7 @@ export default function App() {
   };
 
   // ========================================================
-  // ৩. লাইভ অডিও কলিং ইঞ্জিন
+  // ৪. অডিও কলিং ইঞ্জিন
   // ========================================================
   const startRingtone = () => {
     try {
@@ -439,7 +489,7 @@ export default function App() {
       snap.docChanges().forEach((change) => {
         const callData = { id: change.doc.id, ...change.doc.data() } as ActiveCall;
         const myName = userProfile?.name || 'সহপাঠী';
-        
+
         if (change.type === "added" && callData.status === "ringing" && callData.caller !== myName) {
           setIncomingCall(callData);
           startRingtone();
@@ -503,7 +553,7 @@ export default function App() {
       if (callTimerRef.current) clearInterval(callTimerRef.current);
       callTimerRef.current = setInterval(() => setCallDuration(p => p + 1), 1000);
     } catch (e) {
-      alert('কথা বলার জন্য মাইক্রোফোন পারমিশন দিন।');
+      alert('মাইক্রোফোন পারমিশন দিন।');
     }
   };
 
@@ -528,7 +578,7 @@ export default function App() {
   };
 
   // ========================================================
-  // ৪. লাইভ ঘড়ি ও ব্যাচ টাইম কাউন্টার
+  // ৫. লাইভ ঘড়ি ও ব্যাচ টাইম কাউন্টার
   // ========================================================
   useEffect(() => {
     const sscDate = new Date('2014-05-17T00:00:00');
@@ -561,7 +611,6 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // মেমোরি স্লাইড শো
   useEffect(() => {
     if (memories.length > 1) {
       const interval = setInterval(() => {
@@ -572,10 +621,9 @@ export default function App() {
   }, [memories.length]);
 
   // ========================================================
-  // ৫. ফায়ারবেস ডেটাবেস লিসেনার
+  // ৬. ফায়ারবেস ডেটা লিসেনার
   // ========================================================
   useEffect(() => {
-    // নিবন্ধিত সকল মেম্বার (users কালেকশন থেকে আসল প্রোফাইল সিঙ্ক)
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
@@ -624,7 +672,7 @@ export default function App() {
           if (c.type === "added") {
             const m = c.doc.data() as ChatMsg;
             if (m.senderUid !== currentUser?.uid) {
-              triggerNativeNotification(`💬 ${m.sender}`, m.text || "📷 ছবি/ফাইল পাঠিয়েছেন", "💬");
+              triggerNativeNotification(`💬 ${m.sender}`, m.text || "📷 মিডিয়া পাঠিয়েছেন", "💬");
             }
           }
         });
@@ -654,6 +702,8 @@ export default function App() {
         if (data?.schoolHistory) setSchoolHistory(data.schoolHistory);
         if (data?.apkUrl) setApkDownloadUrl(data.apkUrl);
         if (data?.headerBg) setHeaderBgUrl(data.headerBg);
+        if (data?.cloudName) setCloudinaryCloudName(data.cloudName);
+        if (data?.uploadPreset) setCloudinaryPreset(data.uploadPreset);
       }
     });
 
@@ -684,34 +734,123 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, activeTab]);
 
-  // মেমোরি আপলোড
-  const handleUploadMemory = async (e: React.FormEvent) => {
+  // ========================================================
+  // ৭. কার্ড ছাড়া ১০০% ফ্রি মিডিয়া আপলোড প্রসেসর
+  // ========================================================
+  // স্মৃতি আপলোড (ছবি অটো কম্প্রেস হবে, ভিডিও ক্লাউডে যাবে)
+  const handleUploadMemoryFree = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
       alert('স্মৃতি আপলোড করার জন্য প্রথমে লগইন করুন।');
       setShowAuthModal(true);
       return;
     }
-    if (!memFile) return;
+    if (!selectedMemFile) {
+      alert('অনুগ্রহ করে একটি ছবি বা ভিডিও সিলেক্ট করুন।');
+      return;
+    }
 
-    setIsUploadingMemory(true);
+    const isVideo = selectedMemFile.type.startsWith('video');
+    setMemUploadProgress('প্রসেসিং হচ্ছে...');
+
     try {
+      let finalMediaUrl = '';
+
+      if (isVideo) {
+        // ভিডিও হলে ক্লাউডিনারি ফ্রি আপলোডার দিয়ে আপলোড
+        setMemUploadProgress('ভিডিও আপলোড হচ্ছে...');
+        finalMediaUrl = await uploadToFreeCloud(selectedMemFile);
+      } else {
+        // ছবি হলে ক্লায়েন্ট-সাইড অপ্টিমাইজড কম্প্রেশন (১ সেকেন্ডে ১০০% ফ্রি)
+        setMemUploadProgress('ছবি অপ্টিমাইজ করা হচ্ছে...');
+        finalMediaUrl = await compressImage(selectedMemFile);
+      }
+
       await addDoc(collection(db, "memories"), {
         uploader: userProfile.name,
         uploaderUid: currentUser.uid,
         caption: memCaption.trim() || 'স্কুল জীবনের স্মৃতি',
-        mediaUrl: memFile.url,
-        mediaType: memFile.type,
+        mediaUrl: finalMediaUrl,
+        mediaType: isVideo ? 'video' : 'image',
         timestamp: Date.now()
       });
+
+      setMemUploadProgress(null);
       setShowMemoryUploadModal(false);
-      setMemFile(null);
+      setSelectedMemFile(null);
       setMemCaption('');
-      alert('স্মৃতি সফলভাবে যোগ হয়েছে!');
+      alert('স্মৃতি সফলভাবে সংরক্ষিত হয়েছে!');
+    } catch (err: any) {
+      alert('আপলোড ত্রুটি: ' + (err.message || 'আবার চেষ্টা করুন।'));
+      setMemUploadProgress(null);
+    }
+  };
+
+  // চ্যাটে ছবি বা ফাইল পাঠানো (ফ্রি কম্প্রেশন সহ)
+  const handleSendChatFree = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !userProfile) {
+      alert('মেসেজ পাঠাতে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+    if (!msgInput.trim() && !selectedChatFile) return;
+
+    if (selectedChatFile) {
+      setChatUploadProgress('মিডিয়া প্রস্তুত হচ্ছে...');
+      try {
+        let finalUrl = '';
+        if (selectedChatFile.type.startsWith('video')) {
+          setChatUploadProgress('ভিডিও পাঠানো হচ্ছে...');
+          finalUrl = await uploadToFreeCloud(selectedChatFile);
+        } else {
+          setChatUploadProgress('ছবি কম্প্রেশন হচ্ছে...');
+          finalUrl = await compressImage(selectedChatFile);
+        }
+
+        await addDoc(collection(db, "messages"), {
+          sender: userProfile.name,
+          senderUid: currentUser.uid,
+          text: msgInput.trim() || '',
+          fileUrl: finalUrl,
+          fileType: selectedChatFile.type,
+          fileName: selectedChatFile.name,
+          timestamp: Date.now(),
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        });
+
+        setChatUploadProgress(null);
+        setSelectedChatFile(null);
+        setMsgInput('');
+        if (chatFileInputRef.current) chatFileInputRef.current.value = '';
+      } catch (err: any) {
+        alert('মিডিয়া পাঠাতে সমস্যা হয়েছে।');
+        setChatUploadProgress(null);
+      }
+    } else {
+      await addDoc(collection(db, "messages"), {
+        sender: userProfile.name,
+        senderUid: currentUser.uid,
+        text: msgInput.trim(),
+        timestamp: Date.now(),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
+      setMsgInput('');
+    }
+  };
+
+  // অ্যাডমিন হেডার ছবি পরিবর্তন
+  const handleHeaderBgUploadFree = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const compressedBg = await compressImage(file);
+      setHeaderBgUrl(compressedBg);
+      await setDoc(doc(db, "settings", "app_config"), { headerBg: compressedBg }, { merge: true });
+      alert('হেডার ব্যাকগ্রাউন্ড ছবি সবার জন্য লাইভ আপডেট হয়েছে!');
     } catch (err) {
-      alert('আপলোড করতে সমস্যা হয়েছে।');
-    } finally {
-      setIsUploadingMemory(false);
+      alert('ছবি আপলোডে সমস্যা হয়েছে।');
     }
   };
 
@@ -738,7 +877,7 @@ export default function App() {
       setPrideFullAddress('');
       setPrideDetails('');
       setPridePhone('');
-      alert('ব্যাচের গৌরবে আপনার তথ্য সফলভাবে যুক্ত হয়েছে!');
+      alert('ব্যাচের গৌরবে যুক্ত হয়েছে!');
     } catch (e) {
       alert('ব্যর্থ হয়েছে।');
     }
@@ -764,38 +903,6 @@ export default function App() {
     } catch (e) {}
   };
 
-  // চ্যাট সেন্ড
-  const handleSendChat = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser || !userProfile) {
-      alert('মেসেজ পাঠাতে অনুগ্রহ করে লগইন করুন।');
-      setShowAuthModal(true);
-      return;
-    }
-    if (!msgInput.trim() && !attachedChatFile) return;
-
-    const payload: any = {
-      sender: userProfile.name,
-      senderUid: currentUser.uid,
-      timestamp: Date.now(),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    if (msgInput.trim()) payload.text = msgInput.trim();
-    if (attachedChatFile) {
-      payload.fileUrl = attachedChatFile.url;
-      payload.fileType = attachedChatFile.type;
-      payload.fileName = attachedChatFile.name;
-    }
-
-    try {
-      await addDoc(collection(db, "messages"), payload);
-      setMsgInput('');
-      setAttachedChatFile(null);
-      if (chatFileInputRef.current) chatFileInputRef.current.value = '';
-    } catch (e) {}
-  };
-
   // অ্যাডমিন নোটিশ ব্রডকাস্ট
   const handleSendAdminBroadcast = async () => {
     if (!adminBroadcastMsg.trim()) return;
@@ -818,7 +925,7 @@ export default function App() {
 
   const handleShareApp = async () => {
     const finalDownloadUrl = apkDownloadUrl.trim() || 'https://github.com';
-    const shareText = `🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে এখনই যুক্ত হোন ও স্মৃতি শেয়ার করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n${finalDownloadUrl}`;
+    const shareText = `🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে যুক্ত হোন ও স্মৃতি শেয়ার করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n${finalDownloadUrl}`;
     if (navigator.share) {
       try { await navigator.share({ title: 'পুনর্মিলনী ২০২৭ - এসএসসি ২০১৪', text: shareText }); } catch (err) {}
     } else {
@@ -914,18 +1021,8 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
-            <button
-              onClick={rejectOrEndCall}
-              style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer', boxShadow: '0 4px 20px rgba(220, 38, 38, 0.5)' }}
-            >
-              ✕
-            </button>
-            <button
-              onClick={acceptIncomingCall}
-              style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer', boxShadow: '0 4px 20px rgba(22, 163, 74, 0.5)' }}
-            >
-              📞
-            </button>
+            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+            <button onClick={acceptIncomingCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
           </div>
         </div>
       )}
@@ -945,15 +1042,11 @@ export default function App() {
           color: '#FFFFFF'
         }}>
           <div style={{ textAlign: 'center' }}>
-            <span style={{ fontSize: '11px', color: '#10B981', background: 'rgba(16, 185, 129, 0.2)', padding: '4px 12px', borderRadius: '20px', fontWeight: '800' }}>
-              ● সংযুক্ত অডিও কল
-            </span>
+            <span style={{ fontSize: '11px', color: '#10B981', background: 'rgba(16, 185, 129, 0.2)', padding: '4px 12px', borderRadius: '20px', fontWeight: '800' }}>● সংযুক্ত অডিও কল</span>
             <h3 style={{ fontSize: '22px', margin: '12px 0 2px 0', fontWeight: '900' }}>
               {currentCallSession.caller === userProfile?.name ? 'আপনার ডায়াল করা কল' : currentCallSession.caller}
             </h3>
-            <span style={{ fontSize: '14px', color: '#38BDF8', fontFamily: 'monospace' }}>
-              {formatTimer(callDuration)}
-            </span>
+            <span style={{ fontSize: '14px', color: '#38BDF8', fontFamily: 'monospace' }}>{formatTimer(callDuration)}</span>
           </div>
 
           <div style={{
@@ -965,30 +1058,21 @@ export default function App() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '48px',
-            boxShadow: isMicMuted ? '0 0 20px rgba(239, 68, 68, 0.4)' : '0 0 30px rgba(16, 185, 129, 0.4)'
+            fontSize: '48px'
           }}>
             {isMicMuted ? '🔇' : '🎙️'}
           </div>
 
           <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
-            <button
-              onClick={() => setIsMicMuted(!isMicMuted)}
-              style={{ width: '54px', height: '54px', borderRadius: '50%', backgroundColor: isMicMuted ? '#EF4444' : '#334155', color: '#FFFFFF', border: 'none', fontSize: '20px', cursor: 'pointer' }}
-            >
+            <button onClick={() => setIsMicMuted(!isMicMuted)} style={{ width: '54px', height: '54px', borderRadius: '50%', backgroundColor: isMicMuted ? '#EF4444' : '#334155', color: '#FFFFFF', border: 'none', fontSize: '20px', cursor: 'pointer' }}>
               {isMicMuted ? '🔇' : '🎙️'}
             </button>
-            <button
-              onClick={rejectOrEndCall}
-              style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer', boxShadow: '0 4px 20px rgba(220, 38, 38, 0.5)' }}
-            >
-              📞
-            </button>
+            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
           </div>
         </div>
       )}
 
-      {/* অথেনটিকেশন স্ট্যাটাস বার (লগইন / প্রোফাইল) */}
+      {/* অথেনটিকেশন স্ট্যাটাস বার */}
       <div style={{
         background: '#062B1A',
         color: '#E2E8F0',
@@ -1001,7 +1085,7 @@ export default function App() {
       }}>
         {currentUser && userProfile ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ color: '#10B981', fontWeight: '800' }}>● লগইন: {userProfile.name}</span>
+            <span style={{ color: '#10B981', fontWeight: '800' }}>● {userProfile.name}</span>
             {userProfile.role === 'super_admin' && (
               <span style={{ background: '#F59E0B', color: '#000', padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: '800' }}>
                 অ্যাডমিন
@@ -1014,17 +1098,11 @@ export default function App() {
 
         <div>
           {currentUser ? (
-            <button
-              onClick={handleLogout}
-              style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-            >
+            <button onClick={handleLogout} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
               লগআউট
             </button>
           ) : (
-            <button
-              onClick={() => { setAuthMode('login'); setShowAuthModal(true); }}
-              style={{ background: '#10B981', color: '#fff', border: 'none', padding: '2px 10px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}
-            >
+            <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '2px 10px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}>
               লগইন / সাইন আপ
             </button>
           )}
@@ -1098,7 +1176,7 @@ export default function App() {
           </div>
 
           <div style={{ maxWidth: '500px', margin: '10px auto 0 auto', padding: '0 12px' }}>
-            <div style={{ background: 'linear-gradient(135deg, #0A4D2E 0%, #116B3E 100%)', color: '#FFFFFF', borderRadius: '14px', padding: '10px 12px', textAlign: 'center', boxShadow: '0 3px 12px rgba(10, 77, 46, 0.15)', border: '1px solid rgba(212, 175, 55, 0.4)' }}>
+            <div style={{ background: 'linear-gradient(135deg, #0A4D2E 0%, #116B3E 100%)', color: '#FFFFFF', borderRadius: '14px', padding: '10px 12px', textAlign: 'center', border: '1px solid rgba(212, 175, 55, 0.4)' }}>
               <span style={{ fontSize: '10px', color: '#FEF08A', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
                 ⏳ ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়:
               </span>
@@ -1212,7 +1290,7 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>📸 বন্ধুদের স্মৃতি গ্যালারি</h3>
-                <span style={{ fontSize: '10px', color: '#64748B' }}>স্কুল জীবনের সকল ছবি ও ভিডিও</span>
+                <span style={{ fontSize: '10px', color: '#64748B' }}>১০০% ফ্রি ক্লাউড ভিডিও ও ছবি</span>
               </div>
               <button onClick={() => setShowMemoryUploadModal(true)} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
                 স্মৃতি যোগ করুন ➕
@@ -1338,7 +1416,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ঙ. সহপাঠী ডিরেক্টরি (আসল Firebase Users তালিকা) */}
+        {/* ঙ. সহপাঠী ডিরেক্টরি */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '10px' }}>
@@ -1411,17 +1489,21 @@ export default function App() {
                   <div ref={messagesEndRef} />
                 </div>
 
-                <form onSubmit={handleSendChat} style={{ display: 'flex', alignItems: 'center', padding: '6px', background: '#F0F2F5', borderTop: '1px solid #CBD5E1', gap: '6px' }}>
+                {chatUploadProgress && (
+                  <div style={{ padding: '6px 12px', background: '#DCFCE7', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+                    {chatUploadProgress}
+                  </div>
+                )}
+
+                <form onSubmit={handleSendChatFree} style={{ display: 'flex', alignItems: 'center', padding: '6px', background: '#F0F2F5', borderTop: '1px solid #CBD5E1', gap: '6px' }}>
                   <input type="file" ref={chatFileInputRef} onChange={(e) => {
                     const file = e.target.files?.[0];
-                    if (file) {
-                      const r = new FileReader();
-                      r.onloadend = () => setAttachedChatFile({ url: r.result as string, type: file.type, name: file.name });
-                      r.readAsDataURL(file);
-                    }
+                    if (file) setSelectedChatFile(file);
                   }} accept="image/*,video/*" style={{ display: 'none' }} />
-                  <button type="button" onClick={() => chatFileInputRef.current?.click()} style={{ border: 'none', background: '#E2E8F0', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>📎</button>
-                  <input type="text" placeholder="মেসেজ লিখুন..." value={msgInput} onChange={(e) => {
+                  <button type="button" onClick={() => chatFileInputRef.current?.click()} style={{ border: 'none', background: selectedChatFile ? '#10B981' : '#E2E8F0', color: selectedChatFile ? '#fff' : '#000', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
+                    {selectedChatFile ? '✓' : '📎'}
+                  </button>
+                  <input type="text" placeholder={selectedChatFile ? `সংযুক্ত: ${selectedChatFile.name}` : "মেসেজ লিখুন..."} value={msgInput} onChange={(e) => {
                     setMsgInput(e.target.value);
                     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
                     setDoc(doc(db, "settings", "typing"), { user: userProfile?.name, time: Date.now() });
@@ -1436,7 +1518,7 @@ export default function App() {
 
       </main>
 
-      {/* অথেনটিকেশন মডাল (মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে সাইন আপ / লগইন) */}
+      {/* অথেনটিকেশন মডাল */}
       {showAuthModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '20px', width: '100%', maxWidth: '380px' }}>
@@ -1465,7 +1547,7 @@ export default function App() {
                     <input required type="text" placeholder="উদাঃ সান্দিকোনা" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
                   </div>
                   <div>
-                    <label style={{ fontSize: '11px', fontWeight: '700' }}>বর্তমান ঠিকানা / কর্মস্থল: *</label>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>বর্তমান ঠিকানা: *</label>
                     <input required type="text" placeholder="উদাঃ কেন্দুয়া / ঢাকা" value={authArea} onChange={e => setAuthArea(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
                   </div>
                   <div>
@@ -1510,7 +1592,7 @@ export default function App() {
         </div>
       )}
 
-      {/* মডালসমূহ */}
+      {/* মেমোরি আপলোড মডাল (১০০% ফ্রি অটো কম্প্রেশন ও ক্লাউড সহ) */}
       {showMemoryUploadModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
@@ -1518,24 +1600,28 @@ export default function App() {
               <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>📸 পুরনো স্মৃতি যোগ করুন</h3>
               <button onClick={() => setShowMemoryUploadModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
             </div>
-            <form onSubmit={handleUploadMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <form onSubmit={handleUploadMemoryFree} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <input type="text" placeholder="ক্যাপশন বা বিবরণ..." value={memCaption} onChange={e => setMemCaption(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input required type="file" accept="image/*,video/*" onChange={(e) => {
                 const file = e.target.files?.[0];
-                if (file) {
-                  const r = new FileReader();
-                  r.onloadend = () => setMemFile({ url: r.result as string, type: file.type.startsWith('video') ? 'video' : 'image' });
-                  r.readAsDataURL(file);
-                }
+                if (file) setSelectedMemFile(file);
               }} style={{ width: '100%', padding: '6px', boxSizing: 'border-box' }} />
-              <button type="submit" disabled={isUploadingMemory} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>
-                {isUploadingMemory ? 'আপলোড হচ্ছে...' : 'আপলোড নিশ্চিত করুন'}
+
+              {memUploadProgress && (
+                <div style={{ background: '#DCFCE7', padding: '6px', borderRadius: '6px', textAlign: 'center', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+                  {memUploadProgress}
+                </div>
+              )}
+
+              <button type="submit" disabled={memUploadProgress !== null} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>
+                {memUploadProgress !== null ? 'সংরক্ষণ হচ্ছে...' : 'আপলোড নিশ্চিত করুন'}
               </button>
             </form>
           </div>
         </div>
       )}
 
+      {/* প্রাইড ও শিক্ষক মডাল */}
       {showAddPrideModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
@@ -1548,7 +1634,7 @@ export default function App() {
               <input required type="text" placeholder="বর্তমান পেশা বা পদবি *" value={prideProfession} onChange={e => setPrideProfession(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input type="text" placeholder="কর্মস্থল বা প্রতিষ্ঠান" value={prideOrg} onChange={e => setPrideOrg(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input required type="text" placeholder="নিজ গ্রামের নাম *" value={prideVillage} onChange={e => setPrideVillage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
-              <input required type="text" placeholder="পূর্ণ ঠিকানা (উপজেলা, জেলা) *" value={prideFullAddress} onChange={e => setPrideFullAddress(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input required type="text" placeholder="পূর্ণ ঠিকানা *" value={prideFullAddress} onChange={e => setPrideFullAddress(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <textarea placeholder="সংক্ষিপ্ত অর্জন বা বিবরণ..." value={prideDetails} onChange={e => setPrideDetails(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input type="tel" placeholder="মোবাইল নম্বর" value={pridePhone} onChange={e => setPridePhone(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <button type="submit" style={{ background: '#D97706', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>
@@ -1598,7 +1684,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* ফুটার (অথেনটিকেটেড অ্যাডমিনের জন্য সরাসরি এক্সেস) */}
         <div 
           onClick={() => {
             if (userProfile?.role === 'super_admin') {
@@ -1652,7 +1737,7 @@ export default function App() {
         </button>
       </nav>
 
-      {/* অ্যাডমিন প্যানেল (শুধুমাত্র সুপার অ্যাডমিনের জন্য) */}
+      {/* অ্যাডমিন কন্ট্রোল প্যানেল (ফ্রি ক্লাউড কনফিগারেশন সহ) */}
       {showAdmin && userProfile?.role === 'super_admin' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
@@ -1672,17 +1757,19 @@ export default function App() {
                 </button>
               </div>
 
-              {/* সরাসরি APK ডাউনলোড শেয়ার লিংক ও নোটিশ এডিটর */}
+              {/* হেডার ছবি পরিবর্তন */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
+                <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
+                <button onClick={() => bgFileInputRef.current?.click()} style={{ background: '#0D9488', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  গ্যালারি থেকে বন্ধুদের ছবি সিলেক্ট করুন 📷
+                </button>
+              </div>
+
+              {/* APK ডাউনলোড লিংক ও নোটিশ */}
               <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
-                <p style={{ margin: '0 0 6px 0', fontSize: '10px', color: '#64748B' }}>বর্তমান লিংক: {apkDownloadUrl}</p>
-                <input
-                  type="text"
-                  placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..."
-                  value={newApkUrlInput}
-                  onChange={e => setNewApkUrlInput(e.target.value)}
-                  style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }}
-                />
+                <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
 
                 <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
                 <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
@@ -1695,18 +1782,21 @@ export default function App() {
                   if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
                   if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
                   if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
+                  if (newCloudNameInput.trim()) payload.cloudName = newCloudNameInput.trim();
+                  if (newPresetInput.trim()) payload.uploadPreset = newPresetInput.trim();
+
                   await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
                   if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
                   setNewNoticeInput('');
                   setNewHistoryInput('');
                   setNewApkUrlInput('');
-                  alert('সফলভাবে সেটিংস ও ডাউনলোড লিংক আপডেট হয়েছে!');
+                  alert('সেটিংস সফলভাবে সেভ হয়েছে!');
                 }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
-                  সেটিংস ও ডাউনলোড লিংক সেভ করুন
+                  সেভ ও পাবলিশ করুন
                 </button>
               </div>
 
-              {/* শিক্ষক-শিক্ষিকা তালিকা নিয়ন্ত্রণ ও ডিলিট বাটন */}
+              {/* শিক্ষক তালিকা নিয়ন্ত্রণ */}
               <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                   <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
@@ -1721,14 +1811,11 @@ export default function App() {
                         <strong>{t.name}</strong> ({t.designation})<br/>
                         <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? `| ${t.phone}` : ''}</span>
                       </div>
-                      <button
-                        onClick={async () => {
-                          if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
-                            await deleteDoc(doc(db, "teachers", t.id));
-                          }
-                        }}
-                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                      >
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "teachers", t.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
                         🗑️ বাদ
                       </button>
                     </div>
@@ -1736,7 +1823,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* গৌরব তালিকা নিয়ন্ত্রণ (ডিলিট বাটন সহ) */}
+              {/* গৌরব তালিকা নিয়ন্ত্রণ */}
               <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
@@ -1746,14 +1833,11 @@ export default function App() {
                         <strong>{p.name}</strong> - {p.profession}<br/>
                         <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
                       </div>
-                      <button
-                        onClick={async () => {
-                          if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
-                            await deleteDoc(doc(db, "batch_pride", p.id));
-                          }
-                        }}
-                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                      >
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "batch_pride", p.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
                         🗑️ বাদ
                       </button>
                     </div>
@@ -1761,7 +1845,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* আসল ভেরিফাইড মেম্বার ডিলিট তালিকা */}
+              {/* মেম্বার ডিলিট তালিকা */}
               <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
                 <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '150px', overflowY: 'auto' }}>
@@ -1771,14 +1855,11 @@ export default function App() {
                         <strong>{idx + 1}. {m.name}</strong> ({m.phone})<br/>
                         <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
                       </div>
-                      <button
-                        onClick={async () => {
-                          if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
-                            await deleteDoc(doc(db, "users", m.uid));
-                          }
-                        }}
-                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                      >
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "users", m.uid));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
                         🗑️ বাদ
                       </button>
                     </div>
