@@ -47,6 +47,27 @@ interface UserProfile {
   createdAt: number;
 }
 
+interface PostItem {
+  id: string;
+  authorUid: string;
+  authorName: string;
+  authorVillage: string;
+  content: string;
+  mediaUrl?: string;
+  likes: string[];
+  commentsCount: number;
+  timestamp: number;
+  dateStr: string;
+}
+
+interface PostComment {
+  id: string;
+  authorName: string;
+  authorUid: string;
+  text: string;
+  timestamp: number;
+}
+
 interface MemoryItem {
   id: string;
   uploader: string;
@@ -113,7 +134,17 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // ডেটাবেস স্টেটস
+  // সোশ্যাল টাইমলাইন পোস্ট স্টেটস
+  const [posts, setPosts] = useState<PostItem[]>([]);
+  const [newPostText, setNewPostText] = useState('');
+  const [newPostFile, setNewPostFile] = useState<File | null>(null);
+  const [isPosting, setIsPosting] = useState(false);
+  const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
+  const [commentsList, setCommentsList] = useState<PostComment[]>([]);
+  const [commentInput, setCommentInput] = useState('');
+  const postFileInputRef = useRef<HTMLInputElement>(null);
+
+  // অন্যান্য ডেটাবেস স্টেটস
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
@@ -125,13 +156,9 @@ export default function App() {
   const [schoolHistory, setSchoolHistory] = useState('ঐতিহ্যবাহী সান্দিকোনা স্কুল এন্ড কলেজ নেত্রকোনা জেলার কেন্দুয়া উপজেলার একটি স্বনামধন্য বিদ্যাপীঠ।');
   const [apkDownloadUrl, setApkDownloadUrl] = useState('https://github.com');
   const [headerBgUrl, setHeaderBgUrl] = useState<string>('');
-  
-  // ক্লাউডিনারি ফ্রি স্টোরেজ কনফিগ (কার্ড ছাড়া ভিডিও ও ছবির জন্য)
-  const [cloudinaryCloudName, setCloudinaryCloudName] = useState('demo');
-  const [cloudinaryPreset, setCloudinaryPreset] = useState('docs_upload_example_preset');
   const [isLoading, setIsLoading] = useState(true);
 
-  // ঘড়ি ও টাইমার
+  // ঘড়ি ও কাউন্টার
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
   const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
@@ -160,8 +187,6 @@ export default function App() {
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
   const [adminBroadcastTitle, setAdminBroadcastTitle] = useState('');
   const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
-  const [newCloudNameInput, setNewCloudNameInput] = useState('');
-  const [newPresetInput, setNewPresetInput] = useState('');
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
 
   // মেমোরি আপলোড
@@ -200,9 +225,8 @@ export default function App() {
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
   // ========================================================
-  // ১. কার্ড ছাড়া ফ্রি ক্লাউড আপলোড ও অটো-কম্প্রেশন ইঞ্জিন
+  // ১. ফ্রি ইমেজ অপ্টিমাইজার (Canvas Compression)
   // ========================================================
-  // ব্রাউজারে স্বয়ংক্রিয়ভাবে ছবির সাইজ ৯০% কমিয়ে ফাস্ট করার ফাংশন
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -212,7 +236,7 @@ export default function App() {
         img.src = event.target?.result as string;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          const maxDim = 900; // অপ্টিমাইজড রেজোলিউশন
+          const maxDim = 900;
           let width = img.width;
           let height = img.height;
 
@@ -228,29 +252,10 @@ export default function App() {
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.65)); // মাত্র ৫০-৮০ কেবি সাইজে রূপান্তর
+          resolve(canvas.toDataURL('image/jpeg', 0.65));
         };
       };
     });
-  };
-
-  // ভিডিও বা বড় ফাইল আপলোডার (Cloudinary Free API)
-  const uploadToFreeCloud = async (file: File): Promise<string> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', cloudinaryPreset);
-
-    const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/auto/upload`, {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!response.ok) {
-      throw new Error('ক্লাউড আপলোড সফল হয়নি। ডিফল্ট ইঞ্জিন ব্যবহার করা হচ্ছে।');
-    }
-
-    const data = await response.json();
-    return data.secure_url;
   };
 
   // ========================================================
@@ -621,9 +626,10 @@ export default function App() {
   }, [memories.length]);
 
   // ========================================================
-  // ৬. ফায়ারবেস ডেটা লিসেনার
+  // ৬. ফায়ারবেস ডেটা লিসেনার ও সোশ্যাল পোস্ট সিঙ্ক
   // ========================================================
   useEffect(() => {
+    // মেম্বার প্রোফাইল
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
@@ -642,6 +648,15 @@ export default function App() {
       }
     }, () => setIsLoading(false));
 
+    // সোশ্যাল টাইমলাইন পোস্ট সিঙ্ক
+    const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"));
+    const unsubPosts = onSnapshot(qPosts, (snap) => {
+      const list: PostItem[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
+      setPosts(list);
+    });
+
+    // মেমোরিজ
     const qMemories = query(collection(db, "memories"), orderBy("timestamp", "desc"));
     const unsubMemories = onSnapshot(qMemories, (snap) => {
       const list: MemoryItem[] = [];
@@ -649,18 +664,21 @@ export default function App() {
       setMemories(list);
     });
 
+    // ব্যাচের গৌরব
     const unsubPride = onSnapshot(collection(db, "batch_pride"), (snap) => {
       const list: BatchPrideItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as BatchPrideItem));
       setPrideList(list);
     });
 
+    // শিক্ষক তালিকা
     const unsubTeachers = onSnapshot(collection(db, "teachers"), (snap) => {
       const list: TeacherItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as TeacherItem));
       setTeachers(list);
     });
 
+    // চ্যাট মেসেজ
     const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
     const unsubChat = onSnapshot(qMessages, (snap) => {
       const msgs: ChatMsg[] = [];
@@ -681,6 +699,7 @@ export default function App() {
       }
     });
 
+    // অ্যাডমিন নোটিশ ব্রডকাস্ট
     const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
     const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
       if (isInitialAdminNotifs.current) {
@@ -702,8 +721,6 @@ export default function App() {
         if (data?.schoolHistory) setSchoolHistory(data.schoolHistory);
         if (data?.apkUrl) setApkDownloadUrl(data.apkUrl);
         if (data?.headerBg) setHeaderBgUrl(data.headerBg);
-        if (data?.cloudName) setCloudinaryCloudName(data.cloudName);
-        if (data?.uploadPreset) setCloudinaryPreset(data.uploadPreset);
       }
     });
 
@@ -720,6 +737,7 @@ export default function App() {
 
     return () => {
       unsubUsers();
+      unsubPosts();
       unsubMemories();
       unsubPride();
       unsubTeachers();
@@ -730,14 +748,145 @@ export default function App() {
     };
   }, [currentUser, userProfile]);
 
+  // নির্বাচিত পোস্টের কমেন্ট লিসেনার
+  useEffect(() => {
+    if (!activeCommentsPostId) {
+      setCommentsList([]);
+      return;
+    }
+
+    const qComments = query(
+      collection(db, "posts", activeCommentsPostId, "comments"),
+      orderBy("timestamp", "asc")
+    );
+
+    const unsubComments = onSnapshot(qComments, (snap) => {
+      const list: PostComment[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostComment));
+      setCommentsList(list);
+    });
+
+    return () => unsubComments();
+  }, [activeCommentsPostId]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages, activeTab]);
 
   // ========================================================
-  // ৭. কার্ড ছাড়া ১০০% ফ্রি মিডিয়া আপলোড প্রসেসর
+  // ৭. সোশ্যাল পোস্ট তৈরি, লাইক ও কমেন্ট ইঞ্জিন
   // ========================================================
-  // স্মৃতি আপলোড (ছবি অটো কম্প্রেস হবে, ভিডিও ক্লাউডে যাবে)
+  // নতুন পোস্ট পাবলিশ
+  const handleCreatePost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !userProfile) {
+      alert('পোস্ট করার জন্য প্রথমে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+    if (!newPostText.trim() && !newPostFile) return;
+
+    setIsPosting(true);
+    try {
+      let finalMediaUrl = '';
+      if (newPostFile) {
+        finalMediaUrl = await compressImage(newPostFile);
+      }
+
+      await addDoc(collection(db, "posts"), {
+        authorUid: currentUser.uid,
+        authorName: userProfile.name,
+        authorVillage: userProfile.village || userProfile.area,
+        content: newPostText.trim(),
+        mediaUrl: finalMediaUrl || null,
+        likes: [],
+        commentsCount: 0,
+        timestamp: Date.now(),
+        dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      });
+
+      setNewPostText('');
+      setNewPostFile(null);
+      if (postFileInputRef.current) postFileInputRef.current.value = '';
+      alert('আপনার পোস্টটি টাইমলাইনে সফলভাবে প্রকাশিত হয়েছে!');
+    } catch (err) {
+      alert('পোস্ট প্রকাশ করতে সমস্যা হয়েছে।');
+    } finally {
+      setIsPosting(false);
+    }
+  };
+
+  // লাইক বা আনলাইক টগল
+  const handleToggleLike = async (post: PostItem) => {
+    if (!currentUser) {
+      alert('লাইক দিতে প্রথমে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+
+    const currentLikes = post.likes || [];
+    const isLiked = currentLikes.includes(currentUser.uid);
+    const updatedLikes = isLiked 
+      ? currentLikes.filter(uid => uid !== currentUser.uid)
+      : [...currentLikes, currentUser.uid];
+
+    try {
+      await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // কমেন্ট জমা দেওয়া
+  const handleAddComment = async (e: React.FormEvent, postId: string) => {
+    e.preventDefault();
+    if (!currentUser || !userProfile) {
+      alert('মন্তব্য করতে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+    if (!commentInput.trim()) return;
+
+    try {
+      await addDoc(collection(db, "posts", postId, "comments"), {
+        authorName: userProfile.name,
+        authorUid: currentUser.uid,
+        text: commentInput.trim(),
+        timestamp: Date.now()
+      });
+
+      // কমেন্ট সংখ্যা বৃদ্ধি
+      const targetPost = posts.find(p => p.id === postId);
+      if (targetPost) {
+        await setDoc(doc(db, "posts", postId), { commentsCount: (targetPost.commentsCount || 0) + 1 }, { merge: true });
+      }
+
+      setCommentInput('');
+    } catch (e) {
+      alert('মন্তব্য পোস্ট করা যায়নি।');
+    }
+  };
+
+  // পোস্ট ডিলিট (পোস্টদাতা অথবা অ্যাডমিন)
+  const handleDeletePost = async (postId: string, authorUid: string) => {
+    if (!currentUser) return;
+    const isAuthorized = currentUser.uid === authorUid || userProfile?.role === 'super_admin';
+    if (!isAuthorized) {
+      alert('শুধুমাত্র পোস্টদাতা বা অ্যাডমিন এই পোস্ট ডিলিট করতে পারবেন।');
+      return;
+    }
+
+    if (!window.confirm("আপনি কি নিশ্চিতভাবে এই পোস্টটি টাইমলাইন থেকে মুছে ফেলতে চান?")) return;
+
+    try {
+      await deleteDoc(doc(db, "posts", postId));
+      alert('পোস্টটি মুছে ফেলা হয়েছে।');
+    } catch (err) {
+      alert('ডিলিট করা যায়নি।');
+    }
+  };
+
+  // স্মৃতি আপলোড
   const handleUploadMemoryFree = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -745,33 +894,17 @@ export default function App() {
       setShowAuthModal(true);
       return;
     }
-    if (!selectedMemFile) {
-      alert('অনুগ্রহ করে একটি ছবি বা ভিডিও সিলেক্ট করুন।');
-      return;
-    }
+    if (!selectedMemFile) return;
 
-    const isVideo = selectedMemFile.type.startsWith('video');
-    setMemUploadProgress('প্রসেসিং হচ্ছে...');
-
+    setMemUploadProgress('ছবি অপ্টিমাইজ করা হচ্ছে...');
     try {
-      let finalMediaUrl = '';
-
-      if (isVideo) {
-        // ভিডিও হলে ক্লাউডিনারি ফ্রি আপলোডার দিয়ে আপলোড
-        setMemUploadProgress('ভিডিও আপলোড হচ্ছে...');
-        finalMediaUrl = await uploadToFreeCloud(selectedMemFile);
-      } else {
-        // ছবি হলে ক্লায়েন্ট-সাইড অপ্টিমাইজড কম্প্রেশন (১ সেকেন্ডে ১০০% ফ্রি)
-        setMemUploadProgress('ছবি অপ্টিমাইজ করা হচ্ছে...');
-        finalMediaUrl = await compressImage(selectedMemFile);
-      }
-
+      const finalMediaUrl = await compressImage(selectedMemFile);
       await addDoc(collection(db, "memories"), {
         uploader: userProfile.name,
         uploaderUid: currentUser.uid,
         caption: memCaption.trim() || 'স্কুল জীবনের স্মৃতি',
         mediaUrl: finalMediaUrl,
-        mediaType: isVideo ? 'video' : 'image',
+        mediaType: 'image',
         timestamp: Date.now()
       });
 
@@ -780,13 +913,13 @@ export default function App() {
       setSelectedMemFile(null);
       setMemCaption('');
       alert('স্মৃতি সফলভাবে সংরক্ষিত হয়েছে!');
-    } catch (err: any) {
-      alert('আপলোড ত্রুটি: ' + (err.message || 'আবার চেষ্টা করুন।'));
+    } catch (err) {
+      alert('আপলোড ত্রুটি হয়েছে।');
       setMemUploadProgress(null);
     }
   };
 
-  // চ্যাটে ছবি বা ফাইল পাঠানো (ফ্রি কম্প্রেশন সহ)
+  // চ্যাটে ছবি পাঠানো
   const handleSendChatFree = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -797,17 +930,9 @@ export default function App() {
     if (!msgInput.trim() && !selectedChatFile) return;
 
     if (selectedChatFile) {
-      setChatUploadProgress('মিডিয়া প্রস্তুত হচ্ছে...');
+      setChatUploadProgress('ছবি অপ্টিমাইজ হচ্ছে...');
       try {
-        let finalUrl = '';
-        if (selectedChatFile.type.startsWith('video')) {
-          setChatUploadProgress('ভিডিও পাঠানো হচ্ছে...');
-          finalUrl = await uploadToFreeCloud(selectedChatFile);
-        } else {
-          setChatUploadProgress('ছবি কম্প্রেশন হচ্ছে...');
-          finalUrl = await compressImage(selectedChatFile);
-        }
-
+        const finalUrl = await compressImage(selectedChatFile);
         await addDoc(collection(db, "messages"), {
           sender: userProfile.name,
           senderUid: currentUser.uid,
@@ -818,13 +943,12 @@ export default function App() {
           timestamp: Date.now(),
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         });
-
         setChatUploadProgress(null);
         setSelectedChatFile(null);
         setMsgInput('');
         if (chatFileInputRef.current) chatFileInputRef.current.value = '';
-      } catch (err: any) {
-        alert('মিডিয়া পাঠাতে সমস্যা হয়েছে।');
+      } catch (err) {
+        alert('ছবি পাঠাতে সমস্যা হয়েছে।');
         setChatUploadProgress(null);
       }
     } else {
@@ -1221,48 +1345,202 @@ export default function App() {
       {/* মূল পেজসমূহ */}
       <main style={{ maxWidth: '500px', margin: '0 auto', padding: '12px' }}>
 
+        {/* ======================================================== */}
+        {/* হোম ট্যাব: ফেসবুকের মতো সোশ্যাল টাইমলাইন ফিড */}
+        {/* ======================================================== */}
         {activeTab === 'home' && (
           <div>
-            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '12px', border: '1px solid #E2E8F0', boxShadow: '0 3px 12px rgba(0,0,0,0.03)' }}>
+            {/* নতুন পোস্ট তৈরির বক্স */}
+            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <span style={{ fontSize: '18px' }}>✍️</span>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: '#0A4D2E' }}>বন্ধুদের সাথে কিছু শেয়ার করুন:</span>
+              </div>
+              <form onSubmit={handleCreatePost}>
+                <textarea
+                  rows={2}
+                  placeholder={currentUser ? `${userProfile?.name}, স্কুল জীবনের কোনো স্মৃতি বা ভাবনা লিখুন...` : "পোস্ট করতে প্রথমে লগইন করুন..."}
+                  value={newPostText}
+                  onChange={e => setNewPostText(e.target.value)}
+                  disabled={!currentUser}
+                  style={{ width: '100%', padding: '8px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }}
+                />
+                
+                {newPostFile && (
+                  <div style={{ margin: '6px 0', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+                    📎 ছবি যুক্ত হয়েছে: {newPostFile.name}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                  <input
+                    type="file"
+                    ref={postFileInputRef}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setNewPostFile(f);
+                    }}
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!currentUser) { alert('লগইন করুন'); setShowAuthModal(true); return; }
+                      postFileInputRef.current?.click();
+                    }}
+                    style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                  >
+                    📷 ছবি যোগ করুন
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isPosting || !currentUser}
+                    style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '7px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', opacity: isPosting ? 0.6 : 1 }}
+                  >
+                    {isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন 🚀'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* ফেসবুকের মতো লাইভ টাইমলাইন পোস্টের তালিকা */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
+              {posts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B', fontSize: '12px' }}>
+                  এখনো কোনো পোস্ট দেওয়া হয়নি। প্রথম পোস্টটি আপনিই করুন!
+                </div>
+              ) : (
+                posts.map((post) => {
+                  const isLiked = currentUser ? (post.likes || []).includes(currentUser.uid) : false;
+                  const canDelete = currentUser && (currentUser.uid === post.authorUid || userProfile?.role === 'super_admin');
+
+                  return (
+                    <div key={post.id} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                      {/* পোস্টের হেডার */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{post.authorName}</h4>
+                          <span style={{ fontSize: '10px', color: '#64748B' }}>🏡 {post.authorVillage} • 🕒 {post.dateStr}</span>
+                        </div>
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeletePost(post.id, post.authorUid)}
+                            style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            🗑️ মুছুন
+                          </button>
+                        )}
+                      </div>
+
+                      {/* পোস্টের মূল বিষয়বস্তু */}
+                      {post.content && (
+                        <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#1E293B', lineHeight: '1.5', whiteSpace: 'pre-line' }}>
+                          {post.content}
+                        </p>
+                      )}
+
+                      {/* ছবি থাকলে প্রদর্শন */}
+                      {post.mediaUrl && (
+                        <div style={{ borderRadius: '10px', overflow: 'hidden', marginBottom: '10px', backgroundColor: '#0F172A' }}>
+                          <img src={post.mediaUrl} alt="Post Attachment" style={{ width: '100%', maxHeight: '350px', objectFit: 'contain', display: 'block' }} />
+                        </div>
+                      )}
+
+                      {/* লাইক ও কমেন্ট কাউন্টার বার */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px', marginBottom: '8px' }}>
+                        <span>❤️ {(post.likes || []).length} জন লাইক দিয়েছেন</span>
+                        <span>💬 {post.commentsCount || 0} টি মন্তব্য</span>
+                      </div>
+
+                      {/* অ্যাকশন বাটনসমূহ (লাইক ও কমেন্ট) */}
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleToggleLike(post)}
+                          style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F8FAFC', color: isLiked ? '#DC2626' : '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                        >
+                          <span>{isLiked ? '❤️' : '🤍'}</span> {isLiked ? 'লাইক করেছেন' : 'লাইক দিন'}
+                        </button>
+
+                        <button
+                          onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)}
+                          style={{ flex: 1, background: activeCommentsPostId === post.id ? '#DCFCE7' : '#F8FAFC', color: activeCommentsPostId === post.id ? '#15803D' : '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                        >
+                          <span>💬</span> মন্তব্য করুন
+                        </button>
+                      </div>
+
+                      {/* রিয়েল-টাইম কমেন্ট সেকশন (ড্রয়ার) */}
+                      {activeCommentsPostId === post.id && (
+                        <div style={{ marginTop: '10px', background: '#F8FAFC', borderRadius: '10px', padding: '10px', borderTop: '1px solid #E2E8F0' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', marginBottom: '8px' }}>
+                            {commentsList.length === 0 ? (
+                              <span style={{ fontSize: '11px', color: '#94A3B8', textAlign: 'center' }}>প্রথম মন্তব্যটি আপনিই করুন!</span>
+                            ) : (
+                              commentsList.map(c => (
+                                <div key={c.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '11px' }}>
+                                  <strong style={{ color: '#0A4D2E' }}>{c.authorName}:</strong> {c.text}
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          <form onSubmit={(e) => handleAddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
+                            <input
+                              type="text"
+                              placeholder="মন্তব্য লিখুন..."
+                              value={commentInput}
+                              onChange={e => setCommentInput(e.target.value)}
+                              style={{ flex: 1, padding: '6px 10px', borderRadius: '14px', border: '1px solid #CBD5E1', fontSize: '11px', outline: 'none' }}
+                            />
+                            <button type="submit" style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '14px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                              পাঠান
+                            </button>
+                          </form>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* স্মৃতি অ্যালবাম স্লাইডার */}
+            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '12px', border: '1px solid #E2E8F0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h4 style={{ margin: 0, fontSize: '13px', color: '#0A4D2E', fontWeight: '800' }}>📸 পুরনো দিনের স্মৃতি</h4>
                 <span style={{ fontSize: '9px', background: '#DCFCE7', color: '#15803D', padding: '2px 6px', borderRadius: '8px', fontWeight: '700' }}>লাইভ অ্যালবাম</span>
               </div>
 
               {memories.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '18px 10px', color: '#64748B', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
-                  <p style={{ margin: '0 0 4px 0', fontSize: '12px' }}>এখনো কোনো স্মৃতি আপলোড করা হয়নি।</p>
-                  <button onClick={() => { setActiveTab('memories'); setShowMemoryUploadModal(true); }} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '5px 12px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                    স্মৃতি যোগ করুন ➕
-                  </button>
+                <div style={{ textAlign: 'center', padding: '16px', color: '#64748B', background: '#F8FAFC', borderRadius: '12px', fontSize: '11px' }}>
+                  কোনো স্মৃতি যোগ করা হয়নি।
                 </div>
               ) : (
                 <div>
                   <div style={{ position: 'relative', height: '170px', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#0F172A' }}>
-                    {memories[currentSlideIndex].mediaType === 'image' ? (
-                      <img src={memories[currentSlideIndex].mediaUrl} alt="Memory" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : (
-                      <video src={memories[currentSlideIndex].mediaUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted autoPlay loop playsInline />
-                    )}
+                    <img src={memories[currentSlideIndex].mediaUrl} alt="Memory" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', padding: '8px 10px', color: '#FFFFFF' }}>
                       <p style={{ margin: '0 0 2px 0', fontSize: '11px', fontWeight: '700' }}>{memories[currentSlideIndex].caption}</p>
                       <span style={{ fontSize: '9px', color: '#FEF08A' }}>👤 শেয়ার করেছেন: {memories[currentSlideIndex].uploader}</span>
                     </div>
                   </div>
-
                   <button onClick={() => setActiveTab('memories')} style={{ width: '100%', marginTop: '8px', background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '8px', borderRadius: '10px', fontWeight: '800', fontSize: '11px', cursor: 'pointer' }}>
-                    📸 সমস্ত স্মৃতি ও ভিডিও দেখতে ক্লিক করুন ({memories.length}টি) →
+                    📸 সমস্ত স্মৃতি দেখতে ক্লিক করুন ({memories.length}টি) →
                   </button>
                 </div>
               )}
             </div>
 
+            {/* কাউন্টার কার্ড */}
             <div onClick={() => setActiveTab('directory')} style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '2px solid #BBF7D0', textAlign: 'center', marginBottom: '12px', cursor: 'pointer' }}>
               <span style={{ fontSize: '12px', color: '#137547', fontWeight: '700' }}>এসএসসি ব্যাচ ২০১৪</span>
               <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : `${allUsers.length} জন`}</h2>
               <span style={{ fontSize: '11px', color: '#0284C7', fontWeight: '700', textDecoration: 'underline' }}>👉 সকল সহপাঠীর তালিকা দেখতে ক্লিক করুন</span>
             </div>
 
+            {/* ভেন্যু কার্ড */}
             <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h3 style={{ margin: 0, fontSize: '14px', color: '#0A4D2E', fontWeight: '800' }}>📅 পুনর্মিলনীর সময় ও ভেন্যু</h3>
@@ -1270,16 +1548,6 @@ export default function App() {
               </div>
               <p style={{ fontSize: '12px', margin: '4px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ</p>
               <p style={{ fontSize: '12px', margin: '4px 0', color: '#137547', fontWeight: '700' }}>⏰ <strong>তারিখ:</strong> পবিত্র ঈদুল আজহা ২০২৭</p>
-              
-              {!currentUser ? (
-                <button onClick={() => { setAuthMode('signup'); setShowAuthModal(true); }} style={{ width: '100%', marginTop: '10px', background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 100%)', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer' }}>
-                  📝 পুনর্মিলনীতে যোগ দিতে অ্যাকাউন্ট খুলুন
-                </button>
-              ) : (
-                <div style={{ marginTop: '10px', background: '#DCFCE7', color: '#15803D', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', fontWeight: '700' }}>
-                  ✓ আপনি একজন নিবন্ধিত সহপাঠী ({userProfile?.name})
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -1290,7 +1558,7 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>📸 বন্ধুদের স্মৃতি গ্যালারি</h3>
-                <span style={{ fontSize: '10px', color: '#64748B' }}>১০০% ফ্রি ক্লাউড ভিডিও ও ছবি</span>
+                <span style={{ fontSize: '10px', color: '#64748B' }}>স্কুল জীবনের সকল ছবি ও ভিডিও</span>
               </div>
               <button onClick={() => setShowMemoryUploadModal(true)} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
                 স্মৃতি যোগ করুন ➕
@@ -1304,11 +1572,7 @@ export default function App() {
                 {memories.map((item) => (
                   <div key={item.id} style={{ background: '#FFFFFF', borderRadius: '14px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
                     <div onContextMenu={(e) => e.preventDefault()} style={{ position: 'relative', width: '100%', backgroundColor: '#000000', userSelect: 'none' }}>
-                      {item.mediaType === 'image' ? (
-                        <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
-                      ) : (
-                        <video src={item.mediaUrl} controls controlsList="nodownload noplaybackrate" disablePictureInPicture style={{ width: '100%', maxHeight: '350px', display: 'block' }} />
-                      )}
+                      <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
                       <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.55)', color: '#FEF08A', fontSize: '8px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
                         সান্দিকোনা ২০১৪ স্মৃতি
                       </div>
@@ -1479,8 +1743,7 @@ export default function App() {
                     return (
                       <div key={m.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '82%', backgroundColor: isMe ? '#DCF8C6' : '#FFFFFF', borderRadius: '12px', padding: '8px 10px', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
                         {!isMe && <span style={{ fontSize: '9px', color: '#075E54', fontWeight: '800', display: 'block', marginBottom: '2px' }}>{m.sender}</span>}
-                        {m.fileUrl && m.fileType?.startsWith('image') && <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '8px', display: 'block', marginBottom: '4px' }} />}
-                        {m.fileUrl && m.fileType?.startsWith('video') && <video src={m.fileUrl} controls style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '8px', display: 'block', marginBottom: '4px' }} />}
+                        {m.fileUrl && <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '8px', display: 'block', marginBottom: '4px' }} />}
                         {m.text && <p style={{ margin: 0, fontSize: '12px', color: '#1E293B', wordBreak: 'break-word' }}>{m.text}</p>}
                         <span style={{ fontSize: '8px', color: '#94A3B8', float: 'right', marginTop: '2px', marginLeft: '6px' }}>{m.time} <span style={{ color: '#34B7F1' }}>✓✓</span></span>
                       </div>
@@ -1499,7 +1762,7 @@ export default function App() {
                   <input type="file" ref={chatFileInputRef} onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (file) setSelectedChatFile(file);
-                  }} accept="image/*,video/*" style={{ display: 'none' }} />
+                  }} accept="image/*" style={{ display: 'none' }} />
                   <button type="button" onClick={() => chatFileInputRef.current?.click()} style={{ border: 'none', background: selectedChatFile ? '#10B981' : '#E2E8F0', color: selectedChatFile ? '#fff' : '#000', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
                     {selectedChatFile ? '✓' : '📎'}
                   </button>
@@ -1592,7 +1855,7 @@ export default function App() {
         </div>
       )}
 
-      {/* মেমোরি আপলোড মডাল (১০০% ফ্রি অটো কম্প্রেশন ও ক্লাউড সহ) */}
+      {/* মেমোরি আপলোড মডাল */}
       {showMemoryUploadModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
@@ -1602,7 +1865,7 @@ export default function App() {
             </div>
             <form onSubmit={handleUploadMemoryFree} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <input type="text" placeholder="ক্যাপশন বা বিবরণ..." value={memCaption} onChange={e => setMemCaption(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
-              <input required type="file" accept="image/*,video/*" onChange={(e) => {
+              <input required type="file" accept="image/*" onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) setSelectedMemFile(file);
               }} style={{ width: '100%', padding: '6px', boxSizing: 'border-box' }} />
@@ -1692,186 +1955,3 @@ export default function App() {
               alert('অ্যাডমিন প্যানেলে প্রবেশের জন্য স্মার্ট রাসেল খানের অ্যাকাউন্টে লগইন থাকতে হবে।');
             }
           }}
-          style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '14px', padding: '10px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer' }}
-        >
-          <p style={{ margin: '0 0 2px 0', fontSize: '11px', color: '#137547', fontWeight: '800' }}>
-            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান {userProfile?.role === 'super_admin' ? '(👑 অ্যাডমিন এক্সেস)' : ''}
-          </p>
-          <p style={{ margin: '2px 0', fontSize: '10px', color: '#334155' }}>
-            সরাসরি যোগাযোগ: <a href="tel:01705374798" style={{ color: '#0A4D2E', fontWeight: '700', textDecoration: 'none' }}>01705374798</a>
-          </p>
-        </div>
-      </footer>
-
-      {/* বটম ন্যাভিগেশন বার */}
-      <nav style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        backgroundColor: '#FFFFFF',
-        borderTop: '1px solid #E2E8F0',
-        display: 'flex',
-        justifyContent: 'space-around',
-        padding: '7px 0',
-        zIndex: 1000,
-        boxShadow: '0 -3px 12px rgba(0,0,0,0.05)'
-      }}>
-        <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'home' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>🏠</span><span>হোম</span>
-        </button>
-        <button onClick={() => setActiveTab('memories')} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'memories' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>📸</span><span>স্মৃতি</span>
-        </button>
-        <button onClick={() => setActiveTab('pride')} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'pride' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>🏆</span><span>গৌরব</span>
-        </button>
-        <button onClick={() => setActiveTab('directory')} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'directory' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>👥</span><span>সহপাঠী</span>
-        </button>
-        <button onClick={() => setActiveTab('school')} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span>
-        </button>
-        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '15px' }}>💬</span><span>আড্ডা</span>
-        </button>
-      </nav>
-
-      {/* অ্যাডমিন কন্ট্রোল প্যানেল (ফ্রি ক্লাউড কনফিগারেশন সহ) */}
-      {showAdmin && userProfile?.role === 'super_admin' && (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '16px', fontWeight: '800' }}>👑 অ্যাডমিন কন্ট্রোল প্যানেল</h3>
-              <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
-            </div>
-
-            <div>
-              {/* নোটিফিকেশন ব্রডকাস্ট */}
-              <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
-                <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
-                <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
-                <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
-                  {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
-                </button>
-              </div>
-
-              {/* হেডার ছবি পরিবর্তন */}
-              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
-                <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
-                <button onClick={() => bgFileInputRef.current?.click()} style={{ background: '#0D9488', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
-                  গ্যালারি থেকে বন্ধুদের ছবি সিলেক্ট করুন 📷
-                </button>
-              </div>
-
-              {/* APK ডাউনলোড লিংক ও নোটিশ */}
-              <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
-                <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
-
-                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
-                <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
-
-                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট:</h4>
-                <textarea rows={2} value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box' }} />
-
-                <button onClick={async () => {
-                  const payload: any = {};
-                  if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
-                  if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
-                  if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
-                  if (newCloudNameInput.trim()) payload.cloudName = newCloudNameInput.trim();
-                  if (newPresetInput.trim()) payload.uploadPreset = newPresetInput.trim();
-
-                  await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
-                  if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
-                  setNewNoticeInput('');
-                  setNewHistoryInput('');
-                  setNewApkUrlInput('');
-                  alert('সেটিংস সফলভাবে সেভ হয়েছে!');
-                }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
-                  সেভ ও পাবলিশ করুন
-                </button>
-              </div>
-
-              {/* শিক্ষক তালিকা নিয়ন্ত্রণ */}
-              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
-                  <button onClick={() => setShowAddTeacherModal(true)} style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                    + নতুন শিক্ষক
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                  {teachers.map((t) => (
-                    <div key={t.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #A7F3D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
-                      <div>
-                        <strong>{t.name}</strong> ({t.designation})<br/>
-                        <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? `| ${t.phone}` : ''}</span>
-                      </div>
-                      <button onClick={async () => {
-                        if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
-                          await deleteDoc(doc(db, "teachers", t.id));
-                        }
-                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                        🗑️ বাদ
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* গৌরব তালিকা নিয়ন্ত্রণ */}
-              <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                  {prideList.map((p) => (
-                    <div key={p.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #FEF08A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
-                      <div>
-                        <strong>{p.name}</strong> - {p.profession}<br/>
-                        <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
-                      </div>
-                      <button onClick={async () => {
-                        if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
-                          await deleteDoc(doc(db, "batch_pride", p.id));
-                        }
-                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                        🗑️ বাদ
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* মেম্বার ডিলিট তালিকা */}
-              <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
-                <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '150px', overflowY: 'auto' }}>
-                  {allUsers.map((m, idx) => (
-                    <div key={m.uid} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <strong>{idx + 1}. {m.name}</strong> ({m.phone})<br/>
-                        <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
-                      </div>
-                      <button onClick={async () => {
-                        if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
-                          await deleteDoc(doc(db, "users", m.uid));
-                        }
-                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                        🗑️ বাদ
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
-
-    </div>
-  );
-}
