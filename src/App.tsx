@@ -7,10 +7,19 @@ import {
   onSnapshot, 
   doc, 
   setDoc,
+  getDoc,
   deleteDoc,
   query,
   orderBy
 } from "firebase/firestore";
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut,
+  User
+} from "firebase/auth";
 
 // ফায়ারবেস কনফিগারেশন
 const firebaseConfig = {
@@ -24,15 +33,18 @@ const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 const db = getFirestore(app);
+const auth = getAuth(app);
 
 // ইন্টারফেস
-interface Member {
-  id: string;
+interface UserProfile {
+  uid: string;
   name: string;
   phone: string;
   tshirt: string;
   area: string;
-  createdAt?: any;
+  village: string;
+  role: 'super_admin' | 'member';
+  createdAt: number;
 }
 
 interface MemoryItem {
@@ -66,6 +78,7 @@ interface TeacherItem {
 interface ChatMsg {
   id: string;
   sender: string;
+  senderUid?: string;
   text?: string;
   fileUrl?: string;
   fileType?: string;
@@ -82,11 +95,28 @@ interface ActiveCall {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school' | 'register'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // অথেনটিকেশন ও ইউজার প্রোফাইল স্টেট
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+
+  // অথ ফর্ম স্টেটস
+  const [authPhone, setAuthPhone] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authVillage, setAuthVillage] = useState('');
+  const [authArea, setAuthArea] = useState('');
+  const [authTshirt, setAuthTshirt] = useState('L');
+  const [authError, setAuthError] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
   // ডেটাবেস স্টেটস
-  const [members, setMembers] = useState<Member[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
@@ -99,7 +129,7 @@ export default function App() {
   const [headerBgUrl, setHeaderBgUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // লাইভ ঘড়ি ও ২০১৪ সময় কাউন্টার
+  // লাইভ সময় ও কাউন্টার
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
   const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
@@ -113,7 +143,7 @@ export default function App() {
   const isInitialMessages = useRef(false);
   const isInitialAdminNotifs = useRef(false);
 
-  // ইনকামিং / আউটগোয়িং কলিং স্টেট
+  // কলিং স্টেট
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
   const [currentCallSession, setCurrentCallSession] = useState<ActiveCall | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -121,14 +151,8 @@ export default function App() {
   const callTimerRef = useRef<any>(null);
   const ringtoneOscRef = useRef<any>(null);
 
-  // অ্যাডমিন স্টেট
+  // অ্যাডমিন প্যানেল স্টেট
   const [showAdmin, setShowAdmin] = useState(false);
-  const [adminPin, setAdminPin] = useState('');
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-  const [clickCount, setClickCount] = useState(0);
-  const ADMIN_PIN = '74798';
-
-  // অ্যাডমিন সেটিংস ইনপুট
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newHistoryInput, setNewHistoryInput] = useState('');
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
@@ -138,7 +162,6 @@ export default function App() {
 
   // মডাল স্টেটস
   const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
-  const [memUploader, setMemUploader] = useState(() => localStorage.getItem('sandikona_user_name') || '');
   const [memCaption, setMemCaption] = useState('');
   const [memFile, setMemFile] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const [isUploadingMemory, setIsUploadingMemory] = useState(false);
@@ -158,18 +181,7 @@ export default function App() {
   const [teachDesig, setTeachDesig] = useState('');
   const [teachPhone, setTeachPhone] = useState('');
 
-  // রেজিস্ট্রেশন
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [tshirt, setTshirt] = useState('L');
-  const [area, setArea] = useState('');
-  const [regError, setRegError] = useState('');
-  const [regSuccess, setRegSuccess] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
   // চ্যাট
-  const [chatUser, setChatUser] = useState(() => localStorage.getItem('sandikona_user_name') || '');
-  const [isJoinedChat, setIsJoinedChat] = useState(() => !!localStorage.getItem('sandikona_user_name'));
   const [msgInput, setMsgInput] = useState('');
   const [attachedChatFile, setAttachedChatFile] = useState<{ url: string; type: string; name: string } | null>(null);
   const [typingUser, setTypingUser] = useState<string | null>(null);
@@ -181,7 +193,135 @@ export default function App() {
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
   // ========================================================
-  // ১. নোটিফিকেশন ও সার্ভিস ওয়ার্কার ইঞ্জিন (Android Status Bar)
+  // ১. আসল Firebase Authentication স্টেট হ্যান্ডলার
+  // ========================================================
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        // ফায়ারস্টোর থেকে প্রোফাইল ডেটা লোড
+        try {
+          const userDoc = await getDoc(doc(db, "users", user.uid));
+          if (userDoc.exists()) {
+            setUserProfile(userDoc.data() as UserProfile);
+          }
+        } catch (e) {
+          console.error("Profile load error:", e);
+        }
+      } else {
+        setUserProfile(null);
+      }
+      setAuthLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // ফোন নম্বর দিয়ে ভার্চুয়াল ইমেইল জেনারেটর (Firebase Auth-এর জন্য)
+  const phoneToEmail = (rawPhone: string) => {
+    const clean = rawPhone.replace(/[^\d]/g, '');
+    return `${clean}@sandikona2014.org`;
+  };
+
+  // সাইন আপ হ্যান্ডলার
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSubmitting(true);
+
+    const clean = authPhone.replace(/[^\d]/g, '');
+    if (clean.length < 11) {
+      setAuthError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)');
+      setAuthSubmitting(false);
+      return;
+    }
+
+    if (authPassword.length < 6) {
+      setAuthError('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+      setAuthSubmitting(false);
+      return;
+    }
+
+    try {
+      const email = phoneToEmail(clean);
+      const userCredential = await createUserWithEmailAndPassword(auth, email, authPassword);
+      const user = userCredential.user;
+
+      // সুপার অ্যাডমিন নির্ধারণ (স্মার্ট রাসেল খান: 01705374798)
+      const isSuperAdmin = clean.includes('01705374798') || clean.includes('1705374798');
+
+      const newProfile: UserProfile = {
+        uid: user.uid,
+        name: authName.trim(),
+        phone: clean,
+        tshirt: authTshirt,
+        area: authArea.trim() || 'কেন্দুয়া',
+        village: authVillage.trim() || 'সান্দিকোনা',
+        role: isSuperAdmin ? 'super_admin' : 'member',
+        createdAt: Date.now()
+      };
+
+      // ফায়ারস্টোরে প্রোফাইল সেভ
+      await setDoc(doc(db, "users", user.uid), newProfile);
+      setUserProfile(newProfile);
+      setShowAuthModal(false);
+      setAuthPhone('');
+      setAuthPassword('');
+      setAuthName('');
+      triggerNativeNotification("স্বাগতম!", `অভিনন্দন ${newProfile.name}, আপনার অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে।`);
+    } catch (err: any) {
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট তৈরি করা আছে। দয়া করে লগইন করুন।');
+      } else {
+        setAuthError(err.message || 'অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      }
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  // লগইন হ্যান্ডলার
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthSubmitting(true);
+
+    const clean = authPhone.replace(/[^\d]/g, '');
+    if (clean.length < 11) {
+      setAuthError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন।');
+      setAuthSubmitting(false);
+      return;
+    }
+
+    try {
+      const email = phoneToEmail(clean);
+      const userCredential = await signInWithEmailAndPassword(auth, email, authPassword);
+      const user = userCredential.user;
+
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      if (userDoc.exists()) {
+        setUserProfile(userDoc.data() as UserProfile);
+      }
+      setShowAuthModal(false);
+      setAuthPhone('');
+      setAuthPassword('');
+    } catch (err: any) {
+      setAuthError('ভুল মোবাইল নম্বর বা পাসওয়ার্ড। সঠিক তথ্য দিন।');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  // লগআউট হ্যান্ডলার
+  const handleLogout = async () => {
+    if (window.confirm("আপনি কি লগআউট করতে চান?")) {
+      await signOut(auth);
+      setShowAdmin(false);
+    }
+  };
+
+  // ========================================================
+  // ২. নোটিফিকেশন ও সার্ভিস ওয়ার্কার ইঞ্জিন (Android Status Bar)
   // ========================================================
   useEffect(() => {
     if ('serviceWorker' in navigator) {
@@ -265,7 +405,7 @@ export default function App() {
   };
 
   // ========================================================
-  // ২. লাইভ অডিও কলিং ইঞ্জিন
+  // ৩. লাইভ অডিও কলিং ইঞ্জিন
   // ========================================================
   const startRingtone = () => {
     try {
@@ -298,8 +438,9 @@ export default function App() {
     const unsubCalls = onSnapshot(collection(db, "active_calls"), (snap) => {
       snap.docChanges().forEach((change) => {
         const callData = { id: change.doc.id, ...change.doc.data() } as ActiveCall;
+        const myName = userProfile?.name || 'সহপাঠী';
         
-        if (change.type === "added" && callData.status === "ringing" && callData.caller !== chatUser) {
+        if (change.type === "added" && callData.status === "ringing" && callData.caller !== myName) {
           setIncomingCall(callData);
           startRingtone();
           triggerNativeNotification("📞 ইনকামিং অডিও কল", `${callData.caller} আপনাকে কল দিচ্ছেন...`);
@@ -318,26 +459,26 @@ export default function App() {
     });
 
     return () => unsubCalls();
-  }, [chatUser]);
+  }, [userProfile]);
 
   const initiateCallToAll = async () => {
-    if (!chatUser.trim()) {
-      alert('কল করার জন্য প্রথমে আড্ডায় আপনার নাম দিয়ে প্রবেশ করুন।');
-      setActiveTab('chat');
+    if (!currentUser || !userProfile) {
+      alert('কল করার জন্য প্রথমে লগইন করুন।');
+      setShowAuthModal(true);
       return;
     }
 
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       const callRef = await addDoc(collection(db, "active_calls"), {
-        caller: chatUser,
+        caller: userProfile.name,
         status: 'ringing',
         timestamp: Date.now()
       });
 
       setCurrentCallSession({
         id: callRef.id,
-        caller: chatUser,
+        caller: userProfile.name,
         status: 'ringing',
         timestamp: Date.now()
       });
@@ -387,7 +528,7 @@ export default function App() {
   };
 
   // ========================================================
-  // ৩. লাইভ ঘড়ি ও ব্যাচ টাইম কাউন্টার
+  // ৪. লাইভ ঘড়ি ও ব্যাচ টাইম কাউন্টার
   // ========================================================
   useEffect(() => {
     const sscDate = new Date('2014-05-17T00:00:00');
@@ -431,20 +572,21 @@ export default function App() {
   }, [memories.length]);
 
   // ========================================================
-  // ৪. ফায়ারবেস ডেটাবেস লিসেনার
+  // ৫. ফায়ারবেস ডেটাবেস লিসেনার
   // ========================================================
   useEffect(() => {
-    const unsubMembers = onSnapshot(collection(db, "members"), (snap) => {
-      const list: Member[] = [];
-      snap.forEach(d => list.push({ id: d.id, ...d.data() } as Member));
-      setMembers(list);
+    // নিবন্ধিত সকল মেম্বার (users কালেকশন থেকে আসল প্রোফাইল সিঙ্ক)
+    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+      const list: UserProfile[] = [];
+      snap.forEach(d => list.push(d.data() as UserProfile));
+      setAllUsers(list);
       setIsLoading(false);
 
       if (isInitialMembers.current) {
         snap.docChanges().forEach((c) => {
           if (c.type === "added") {
-            const m = c.doc.data() as Member;
-            triggerNativeNotification("🎉 নতুন সহপাঠী যুক্ত হয়েছেন!", `${m.name} (${m.area}) ব্যাচে নিবন্ধন করেছেন।`, "🎓");
+            const m = c.doc.data() as UserProfile;
+            triggerNativeNotification("🎉 নতুন সহপাঠী যুক্ত হয়েছেন!", `${m.name} (${m.village || m.area}) পুনর্মিলনীতে যোগ দিয়েছেন।`, "🎓");
           }
         });
       } else {
@@ -481,7 +623,7 @@ export default function App() {
         snap.docChanges().forEach((c) => {
           if (c.type === "added") {
             const m = c.doc.data() as ChatMsg;
-            if (m.sender !== chatUser) {
+            if (m.senderUid !== currentUser?.uid) {
               triggerNativeNotification(`💬 ${m.sender}`, m.text || "📷 ছবি/ফাইল পাঠিয়েছেন", "💬");
             }
           }
@@ -518,7 +660,7 @@ export default function App() {
     const unsubTyping = onSnapshot(doc(db, "settings", "typing"), (d) => {
       if (d.exists()) {
         const data = d.data();
-        if (data?.user && data.user !== chatUser && Date.now() - data.time < 3500) {
+        if (data?.user && data.user !== userProfile?.name && Date.now() - data.time < 3500) {
           setTypingUser(data.user);
         } else {
           setTypingUser(null);
@@ -527,7 +669,7 @@ export default function App() {
     });
 
     return () => {
-      unsubMembers();
+      unsubUsers();
       unsubMemories();
       unsubPride();
       unsubTeachers();
@@ -536,7 +678,7 @@ export default function App() {
       unsubSettings();
       unsubTyping();
     };
-  }, [chatUser]);
+  }, [currentUser, userProfile]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -545,18 +687,23 @@ export default function App() {
   // মেমোরি আপলোড
   const handleUploadMemory = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!memFile || !memUploader.trim()) return;
+    if (!currentUser || !userProfile) {
+      alert('স্মৃতি আপলোড করার জন্য প্রথমে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+    if (!memFile) return;
 
     setIsUploadingMemory(true);
     try {
       await addDoc(collection(db, "memories"), {
-        uploader: memUploader.trim(),
+        uploader: userProfile.name,
+        uploaderUid: currentUser.uid,
         caption: memCaption.trim() || 'স্কুল জীবনের স্মৃতি',
         mediaUrl: memFile.url,
         mediaType: memFile.type,
         timestamp: Date.now()
       });
-      localStorage.setItem('sandikona_user_name', memUploader.trim());
       setShowMemoryUploadModal(false);
       setMemFile(null);
       setMemCaption('');
@@ -568,7 +715,7 @@ export default function App() {
     }
   };
 
-  // গৌরব সাবমিট (গ্রাম ও পূর্ণ ঠিকানা সহ)
+  // গৌরব সাবমিট
   const handleAddPrideSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prideName.trim() || !prideProfession.trim()) return;
@@ -617,53 +764,19 @@ export default function App() {
     } catch (e) {}
   };
 
-  // মেম্বার রেজিস্ট্রেশন
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegError('');
-    setIsSubmitting(true);
-
-    const cleanPhone = phone.replace(/[^\d]/g, '');
-    if (cleanPhone.length < 11) {
-      setRegError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)');
-      setIsSubmitting(false);
-      return;
-    }
-
-    const exists = members.some(m => m.phone.replace(/[^\d]/g, '').slice(-11) === cleanPhone.slice(-11));
-    if (exists) {
-      setRegError('⚠️ এই নম্বর দিয়ে আগেই রেজিস্ট্রেশন করা হয়েছে!');
-      setIsSubmitting(false);
-      return;
-    }
-
-    try {
-      await addDoc(collection(db, "members"), {
-        name: name.trim(),
-        phone: cleanPhone,
-        batch: '2014',
-        tshirt,
-        area: area.trim() || 'সান্দিকোনা, কেন্দুয়া',
-        createdAt: new Date().toISOString()
-      });
-      setRegSuccess(true);
-      setName('');
-      setPhone('');
-      setArea('');
-    } catch (err) {
-      setRegError('সংরক্ষণ করা যায়নি।');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   // চ্যাট সেন্ড
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentUser || !userProfile) {
+      alert('মেসেজ পাঠাতে অনুগ্রহ করে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
     if (!msgInput.trim() && !attachedChatFile) return;
 
     const payload: any = {
-      sender: chatUser || 'এসএসসি ২০১৪ বন্ধু',
+      sender: userProfile.name,
+      senderUid: currentUser.uid,
       timestamp: Date.now(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
@@ -683,7 +796,7 @@ export default function App() {
     } catch (e) {}
   };
 
-  // অ্যাডমিন নোটিশ ও ব্রডকাস্ট
+  // অ্যাডমিন নোটিশ ব্রডকাস্ট
   const handleSendAdminBroadcast = async () => {
     if (!adminBroadcastMsg.trim()) return;
     setIsSendingBroadcast(true);
@@ -714,7 +827,7 @@ export default function App() {
     }
   };
 
-  const filteredMembers = members.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.area.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredMembers = allUsers.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.area.toLowerCase().includes(searchQuery.toLowerCase()) || m.village.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <div style={{
@@ -809,7 +922,7 @@ export default function App() {
             </button>
             <button
               onClick={acceptIncomingCall}
-              style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer', boxShadow: '0 4px 20px rgba(220, 38, 38, 0.5)' }}
+              style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer', boxShadow: '0 4px 20px rgba(22, 163, 74, 0.5)' }}
             >
               📞
             </button>
@@ -836,7 +949,7 @@ export default function App() {
               ● সংযুক্ত অডিও কল
             </span>
             <h3 style={{ fontSize: '22px', margin: '12px 0 2px 0', fontWeight: '900' }}>
-              {currentCallSession.caller === chatUser ? 'আপনার ডায়াল করা কল' : currentCallSession.caller}
+              {currentCallSession.caller === userProfile?.name ? 'আপনার ডায়াল করা কল' : currentCallSession.caller}
             </h3>
             <span style={{ fontSize: '14px', color: '#38BDF8', fontFamily: 'monospace' }}>
               {formatTimer(callDuration)}
@@ -875,6 +988,49 @@ export default function App() {
         </div>
       )}
 
+      {/* অথেনটিকেশন স্ট্যাটাস বার (লগইন / প্রোফাইল) */}
+      <div style={{
+        background: '#062B1A',
+        color: '#E2E8F0',
+        padding: '5px 12px',
+        fontSize: '11px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderBottom: '1px solid rgba(255,255,255,0.1)'
+      }}>
+        {currentUser && userProfile ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ color: '#10B981', fontWeight: '800' }}>● লগইন: {userProfile.name}</span>
+            {userProfile.role === 'super_admin' && (
+              <span style={{ background: '#F59E0B', color: '#000', padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: '800' }}>
+                অ্যাডমিন
+              </span>
+            )}
+          </div>
+        ) : (
+          <span style={{ color: '#FCD34D' }}>⚠️ অ্যাকাউন্টে লগইন করা নেই</span>
+        )}
+
+        <div>
+          {currentUser ? (
+            <button
+              onClick={handleLogout}
+              style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+            >
+              লগআউট
+            </button>
+          ) : (
+            <button
+              onClick={() => { setAuthMode('login'); setShowAuthModal(true); }}
+              style={{ background: '#10B981', color: '#fff', border: 'none', padding: '2px 10px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}
+            >
+              লগইন / সাইন আপ
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* বড় ব্যানার শুধু HOME ট্যাবে থাকবে */}
       {activeTab === 'home' ? (
         <>
@@ -898,27 +1054,6 @@ export default function App() {
               📅 {currentDateStr || '...'}
             </div>
           </div>
-
-          {notifPermission !== 'granted' && (
-            <div style={{
-              backgroundColor: '#FEF3C7',
-              color: '#92400E',
-              padding: '6px 12px',
-              fontSize: '10px',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              borderBottom: '1px solid #FDE68A'
-            }}>
-              <span>🔔 মোবাইল নোটিফিকেশন বারে মেসেজ ও নোটিশ পান</span>
-              <button
-                onClick={requestAllAppPermissions}
-                style={{ backgroundColor: '#D97706', color: '#FFFFFF', border: 'none', padding: '3px 8px', borderRadius: '5px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-              >
-                অন করুন
-              </button>
-            </div>
-          )}
 
           <header style={{
             backgroundImage: headerBgUrl 
@@ -1000,7 +1135,6 @@ export default function App() {
             {activeTab === 'directory' && '👥 সহপাঠীদের তালিকা'}
             {activeTab === 'school' && '🏫 বিদ্যালয় ও শিক্ষক পরিচিতি'}
             {activeTab === 'chat' && '💬 এসএসসি ২০১৪ আড্ডা'}
-            {activeTab === 'register' && '📝 পুনর্মিলনী নিবন্ধন'}
           </span>
           <span style={{ fontSize: '11px', color: '#A7F3D0' }}>ব্যাচ ২০১৪</span>
         </div>
@@ -1047,7 +1181,7 @@ export default function App() {
 
             <div onClick={() => setActiveTab('directory')} style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '2px solid #BBF7D0', textAlign: 'center', marginBottom: '12px', cursor: 'pointer' }}>
               <span style={{ fontSize: '12px', color: '#137547', fontWeight: '700' }}>এসএসসি ব্যাচ ২০১৪</span>
-              <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : `${members.length} জন`}</h2>
+              <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : `${allUsers.length} জন`}</h2>
               <span style={{ fontSize: '11px', color: '#0284C7', fontWeight: '700', textDecoration: 'underline' }}>👉 সকল সহপাঠীর তালিকা দেখতে ক্লিক করুন</span>
             </div>
 
@@ -1058,9 +1192,16 @@ export default function App() {
               </div>
               <p style={{ fontSize: '12px', margin: '4px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ</p>
               <p style={{ fontSize: '12px', margin: '4px 0', color: '#137547', fontWeight: '700' }}>⏰ <strong>তারিখ:</strong> পবিত্র ঈদুল আজহা ২০২৭</p>
-              <button onClick={() => setActiveTab('register')} style={{ width: '100%', marginTop: '10px', background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 100%)', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer' }}>
-                📝 পুনর্মিলনী নিবন্ধন ফরম পূরণ করুন
-              </button>
+              
+              {!currentUser ? (
+                <button onClick={() => { setAuthMode('signup'); setShowAuthModal(true); }} style={{ width: '100%', marginTop: '10px', background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 100%)', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '10px', fontWeight: '800', fontSize: '12px', cursor: 'pointer' }}>
+                  📝 পুনর্মিলনীতে যোগ দিতে অ্যাকাউন্ট খুলুন
+                </button>
+              ) : (
+                <div style={{ marginTop: '10px', background: '#DCFCE7', color: '#15803D', padding: '8px', borderRadius: '8px', textAlign: 'center', fontSize: '11px', fontWeight: '700' }}>
+                  ✓ আপনি একজন নিবন্ধিত সহপাঠী ({userProfile?.name})
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1197,15 +1338,15 @@ export default function App() {
           </div>
         )}
 
-        {/* ঙ. সহপাঠী ডিরেক্টরি */}
+        {/* ঙ. সহপাঠী ডিরেক্টরি (আসল Firebase Users তালিকা) */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '10px' }}>
-              <input type="text" placeholder="🔍 সহপাঠীর নাম বা এলাকা দিয়ে খুঁজুন..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: '12px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', backgroundColor: '#FFFFFF', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="🔍 নাম, গ্রাম বা এলাকা দিয়ে খুঁজুন..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: '12px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', backgroundColor: '#FFFFFF', boxSizing: 'border-box' }} />
             </div>
 
             <div style={{ fontSize: '11px', color: '#137547', fontWeight: '700', marginBottom: '8px' }}>
-              মোট নিবন্ধিত বন্ধু: {filteredMembers.length} জন
+              মোট নিবন্ধিত সহপাঠী: {filteredMembers.length} জন
             </div>
 
             {filteredMembers.length === 0 ? (
@@ -1213,13 +1354,13 @@ export default function App() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {filteredMembers.map((m) => (
-                  <div key={m.id} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
-                      <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 📍 {m.area}</p>
+                      <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
                       <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
                     </div>
-                    <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', fontWeight: '700' }}>✓ নিবন্ধিত</span>
+                    <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
                   </div>
                 ))}
               </div>
@@ -1227,56 +1368,7 @@ export default function App() {
           </div>
         )}
 
-        {/* চ. রেজিস্ট্রেশন ফর্ম */}
-        {activeTab === 'register' && (
-          <div style={{ background: '#FFFFFF', padding: '16px', borderRadius: '16px', border: '1px solid #E2E8F0' }}>
-            <h3 style={{ margin: '0 0 4px 0', color: '#0A4D2E', fontSize: '16px', fontWeight: '800' }}>📝 পুনর্মিলনী নিবন্ধন ফরম</h3>
-            <p style={{ margin: '0 0 12px 0', fontSize: '11px', color: '#64748B' }}>একজন ব্যক্তি একটি মোবাইল নম্বর দিয়ে একবারই নিবন্ধন করতে পারবেন।</p>
-
-            {regError && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', padding: '10px', borderRadius: '10px', fontSize: '11px', marginBottom: '12px' }}>{regError}</div>
-            )}
-
-            {regSuccess ? (
-              <div style={{ background: '#DCFCE7', border: '1px solid #86EFAC', padding: '16px', borderRadius: '12px', textAlign: 'center', color: '#137547' }}>
-                <h4 style={{ margin: '0 0 4px 0' }}>🎉 নিবন্ধন সফল হয়েছে!</h4>
-                <p style={{ margin: 0, fontSize: '12px' }}>আপনার তথ্য কেন্দ্রীয় ক্লাউড ডেটাবেসে সংরক্ষিত হয়েছে।</p>
-                <button onClick={() => { setRegSuccess(false); setActiveTab('directory'); }} style={{ marginTop: '10px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
-                  সহপাঠী তালিকায় দেখুন
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleRegisterSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '700' }}>আপনার পূর্ণ নাম: *</label>
-                  <input required type="text" placeholder="উদাঃ মোঃ রাসেল মিয়া" value={name} onChange={e => setName(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '3px', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '700' }}>মোবাইল নম্বর: *</label>
-                  <input required type="tel" placeholder="017XXXXXXXX" value={phone} onChange={e => setPhone(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '3px', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '700' }}>এলাকার নাম লিখুন: *</label>
-                  <input required type="text" placeholder="উদাঃ সান্দিকোনা / কেন্দুয়া / ঢাকা" value={area} onChange={e => setArea(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '3px', boxSizing: 'border-box' }} />
-                </div>
-                <div>
-                  <label style={{ fontSize: '11px', fontWeight: '700' }}>টি-শার্ট সাইজ: *</label>
-                  <select value={tshirt} onChange={e => setTshirt(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '3px', boxSizing: 'border-box', background: '#FFFFFF' }}>
-                    <option value="M">Medium (M - ৩৮)</option>
-                    <option value="L">Large (L - ৪০)</option>
-                    <option value="XL">Extra Large (XL - ৪২)</option>
-                    <option value="XXL">Double XL (XXL - ৪৪)</option>
-                  </select>
-                </div>
-                <button type="submit" disabled={isSubmitting} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: '800', fontSize: '13px', marginTop: '4px', cursor: 'pointer' }}>
-                  {isSubmitting ? 'সংরক্ষণ হচ্ছে...' : 'নিবন্ধন নিশ্চিত করুন'}
-                </button>
-              </form>
-            )}
-          </div>
-        )}
-
-        {/* ছ. হোয়াটসঅ্যাপ আড্ডা */}
+        {/* চ. হোয়াটসঅ্যাপ আড্ডা */}
         {activeTab === 'chat' && (
           <div style={{ background: '#E5DDD5', borderRadius: '16px', border: '1px solid #CBD5E1', height: '72vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '8px 12px', background: '#075E54', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1293,21 +1385,19 @@ export default function App() {
               </button>
             </div>
 
-            {!isJoinedChat ? (
+            {!currentUser || !userProfile ? (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '20px', textAlign: 'center' }}>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '15px' }}>আড্ডায় প্রবেশ করতে নাম দিন</h4>
-                <form onSubmit={(e) => { e.preventDefault(); if (chatUser.trim()) { localStorage.setItem('sandikona_user_name', chatUser.trim()); setIsJoinedChat(true); } }} style={{ width: '100%', maxWidth: '260px' }}>
-                  <input required type="text" placeholder="আপনার নাম লিখুন..." value={chatUser} onChange={(e) => setChatUser(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginBottom: '8px', textAlign: 'center' }} />
-                  <button type="submit" style={{ width: '100%', background: '#075E54', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
-                    👉 আড্ডায় প্রবেশ করুন
-                  </button>
-                </form>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '15px' }}>আড্ডায় প্রবেশ করতে লগইন করুন</h4>
+                <p style={{ fontSize: '12px', color: '#64748B', marginBottom: '12px' }}>মেসেজ দেওয়া ও অডিও কলে কথা বলতে আপনার অ্যাকাউন্ট লাগবে।</p>
+                <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
+                  লগইন / সাইন আপ করুন
+                </button>
               </div>
             ) : (
               <>
                 <div style={{ flex: 1, padding: '10px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {chatMessages.map((m) => {
-                    const isMe = m.sender === chatUser;
+                    const isMe = m.senderUid === currentUser.uid;
                     return (
                       <div key={m.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '82%', backgroundColor: isMe ? '#DCF8C6' : '#FFFFFF', borderRadius: '12px', padding: '8px 10px', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
                         {!isMe && <span style={{ fontSize: '9px', color: '#075E54', fontWeight: '800', display: 'block', marginBottom: '2px' }}>{m.sender}</span>}
@@ -1334,7 +1424,7 @@ export default function App() {
                   <input type="text" placeholder="মেসেজ লিখুন..." value={msgInput} onChange={(e) => {
                     setMsgInput(e.target.value);
                     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-                    setDoc(doc(db, "settings", "typing"), { user: chatUser, time: Date.now() });
+                    setDoc(doc(db, "settings", "typing"), { user: userProfile?.name, time: Date.now() });
                     typingTimeoutRef.current = setTimeout(() => setDoc(doc(db, "settings", "typing"), { user: null, time: 0 }), 2500);
                   }} style={{ flex: 1, padding: '9px 12px', borderRadius: '20px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', background: '#FFFFFF' }} />
                   <button type="submit" style={{ background: '#075E54', color: '#FFFFFF', border: 'none', width: '34px', height: '34px', borderRadius: '50%', cursor: 'pointer' }}>➤</button>
@@ -1346,6 +1436,80 @@ export default function App() {
 
       </main>
 
+      {/* অথেনটিকেশন মডাল (মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে সাইন আপ / লগইন) */}
+      {showAuthModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '20px', width: '100%', maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '17px', fontWeight: '900' }}>
+                {authMode === 'login' ? '🔐 সহপাঠী লগইন' : '📝 নতুন অ্যাকাউন্ট নিবন্ধন'}
+              </h3>
+              <button onClick={() => setShowAuthModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {authError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', padding: '8px 10px', borderRadius: '8px', fontSize: '11px', marginBottom: '10px' }}>
+                {authError}
+              </div>
+            )}
+
+            <form onSubmit={authMode === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {authMode === 'signup' && (
+                <>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>পূর্ণ নাম: *</label>
+                    <input required type="text" placeholder="উদাঃ মোঃ রাসেল মিয়া" value={authName} onChange={e => setAuthName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>নিজ গ্রাম: *</label>
+                    <input required type="text" placeholder="উদাঃ সান্দিকোনা" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>বর্তমান ঠিকানা / কর্মস্থল: *</label>
+                    <input required type="text" placeholder="উদাঃ কেন্দুয়া / ঢাকা" value={authArea} onChange={e => setAuthArea(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>জার্সি সাইজ: *</label>
+                    <select value={authTshirt} onChange={e => setAuthTshirt(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box', background: '#fff' }}>
+                      <option value="M">Medium (M - ৩৮)</option>
+                      <option value="L">Large (L - ৪০)</option>
+                      <option value="XL">Extra Large (XL - ৪২)</option>
+                      <option value="XXL">Double XL (XXL - ৪৪)</option>
+                    </select>
+                  </div>
+                </>
+              )}
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700' }}>মোবাইল নম্বর: *</label>
+                <input required type="tel" placeholder="017XXXXXXXX" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700' }}>পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর): *</label>
+                <input required type="password" placeholder="গোপন পাসওয়ার্ড দিন" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+              </div>
+
+              <button type="submit" disabled={authSubmitting} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}>
+                {authSubmitting ? 'প্রসেসিং...' : (authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন সম্পন্ন করুন')}
+              </button>
+            </form>
+
+            <div style={{ marginTop: '10px', textAlign: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '8px' }}>
+              {authMode === 'login' ? (
+                <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>
+                  অ্যাকাউন্ট নেই? <button onClick={() => { setAuthMode('signup'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#0A4D2E', fontWeight: '800', cursor: 'pointer' }}>এখানে নতুন অ্যাকাউন্ট খুলুন</button>
+                </p>
+              ) : (
+                <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>
+                  ইতোমধ্যে অ্যাকাউন্ট আছে? <button onClick={() => { setAuthMode('login'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#0A4D2E', fontWeight: '800', cursor: 'pointer' }}>সরাসরি লগইন করুন</button>
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* মডালসমূহ */}
       {showMemoryUploadModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
@@ -1355,7 +1519,6 @@ export default function App() {
               <button onClick={() => setShowMemoryUploadModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
             </div>
             <form onSubmit={handleUploadMemory} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <input required type="text" placeholder="আপনার নাম *" value={memUploader} onChange={e => setMemUploader(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input type="text" placeholder="ক্যাপশন বা বিবরণ..." value={memCaption} onChange={e => setMemCaption(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
               <input required type="file" accept="image/*,video/*" onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -1435,16 +1598,19 @@ export default function App() {
           </button>
         </div>
 
+        {/* ফুটার (অথেনটিকেটেড অ্যাডমিনের জন্য সরাসরি এক্সেস) */}
         <div 
           onClick={() => {
-            const next = clickCount + 1;
-            if (next >= 3) { setClickCount(0); setShowAdmin(true); }
-            else { setClickCount(next); setTimeout(() => setClickCount(0), 2000); }
+            if (userProfile?.role === 'super_admin') {
+              setShowAdmin(true);
+            } else {
+              alert('অ্যাডমিন প্যানেলে প্রবেশের জন্য স্মার্ট রাসেল খানের অ্যাকাউন্টে লগইন থাকতে হবে।');
+            }
           }}
           style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '14px', padding: '10px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer' }}
         >
           <p style={{ margin: '0 0 2px 0', fontSize: '11px', color: '#137547', fontWeight: '800' }}>
-            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান
+            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান {userProfile?.role === 'super_admin' ? '(👑 অ্যাডমিন এক্সেস)' : ''}
           </p>
           <p style={{ margin: '2px 0', fontSize: '10px', color: '#334155' }}>
             সরাসরি যোগাযোগ: <a href="tel:01705374798" style={{ color: '#0A4D2E', fontWeight: '700', textDecoration: 'none' }}>01705374798</a>
@@ -1486,164 +1652,141 @@ export default function App() {
         </button>
       </nav>
 
-      {/* ======================================================== */}
-      {/* গোপন অ্যাডমিন কন্ট্রোল প্যানেল (শিক্ষক ডিলিট ও শেয়ার লিংক আপডেট সহ) */}
-      {/* ======================================================== */}
-      {showAdmin && (
+      {/* অ্যাডমিন প্যানেল (শুধুমাত্র সুপার অ্যাডমিনের জন্য) */}
+      {showAdmin && userProfile?.role === 'super_admin' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '16px', fontWeight: '800' }}>👑 অ্যাডমিন কন্ট্রোল প্যানেল</h3>
-              <button onClick={() => { setShowAdmin(false); setIsAdminLoggedIn(false); setAdminPin(''); }} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
+              <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
             </div>
 
-            {!isAdminLoggedIn ? (
-              <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                <p style={{ fontSize: '12px', color: '#475569', marginBottom: '10px' }}>সম্মানিত আয়োজক (স্মার্ট রাসেল খান), আপনার ৫ ডিজিটের সিক্রেট পিন দিন:</p>
-                <input
-                  type="password"
-                  placeholder="সিক্রেট পিন"
-                  value={adminPin}
-                  onChange={(e) => setAdminPin(e.target.value)}
-                  style={{ width: '60%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', textAlign: 'center', fontSize: '15px', letterSpacing: '4px', marginBottom: '12px' }}
-                />
-                <br />
-                <button
-                  onClick={() => {
-                    if (adminPin === ADMIN_PIN) setIsAdminLoggedIn(true);
-                    else alert('ভুল সিক্রেট পিন!');
-                  }}
-                  style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '9px 20px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}
-                >
-                  প্রবেশ করুন
+            <div>
+              {/* নোটিফিকেশন ব্রডকাস্ট */}
+              <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
+                <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
+                <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
+                <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                  {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
                 </button>
               </div>
-            ) : (
-              <div>
-                {/* নোটিফিকেশন ব্রডকাস্ট */}
-                <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
-                  <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
-                  <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
-                  <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
-                    {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
-                  </button>
-                </div>
 
-                {/* ২নং চাহিদা: সরাসরি APK ডাউনলোড শেয়ার লিংক ও নোটিশ এডিটর */}
-                <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
-                  <p style={{ margin: '0 0 6px 0', fontSize: '10px', color: '#64748B' }}>বর্তমান লিংক: {apkDownloadUrl}</p>
-                  <input
-                    type="text"
-                    placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..."
-                    value={newApkUrlInput}
-                    onChange={e => setNewApkUrlInput(e.target.value)}
-                    style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }}
-                  />
+              {/* সরাসরি APK ডাউনলোড শেয়ার লিংক ও নোটিশ এডিটর */}
+              <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
+                <p style={{ margin: '0 0 6px 0', fontSize: '10px', color: '#64748B' }}>বর্তমান লিংক: {apkDownloadUrl}</p>
+                <input
+                  type="text"
+                  placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..."
+                  value={newApkUrlInput}
+                  onChange={e => setNewApkUrlInput(e.target.value)}
+                  style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }}
+                />
 
-                  <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
-                  <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
+                <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
 
-                  <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট:</h4>
-                  <textarea rows={2} value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box' }} />
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট:</h4>
+                <textarea rows={2} value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box' }} />
 
-                  <button onClick={async () => {
-                    const payload: any = {};
-                    if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
-                    if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
-                    if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
-                    await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
-                    if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
-                    setNewApkUrlInput('');
-                    alert('সফলভাবে সেটিংস ও শেয়ার লিংক আপডেট হয়েছে!');
-                  }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
-                    সেটিংস ও ডাউনলোড লিংক সেভ করুন
-                  </button>
-                </div>
-
-                {/* ১নং চাহিদা: শিক্ষক-শিক্ষিকা তালিকা নিয়ন্ত্রণ ও ডিলিট বাটন */}
-                <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
-                    <button onClick={() => setShowAddTeacherModal(true)} style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                      + নতুন শিক্ষক
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                    {teachers.map((t) => (
-                      <div key={t.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #A7F3D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
-                        <div>
-                          <strong>{t.name}</strong> ({t.designation})<br/>
-                          <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? `| ${t.phone}` : ''}</span>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
-                              await deleteDoc(doc(db, "teachers", t.id));
-                            }
-                          }}
-                          style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          🗑️ বাদ
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* গৌরব তালিকা নিয়ন্ত্রণ (ডিলিট বাটন সহ) */}
-                <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                  <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                    {prideList.map((p) => (
-                      <div key={p.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #FEF08A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
-                        <div>
-                          <strong>{p.name}</strong> - {p.profession}<br/>
-                          <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
-                              await deleteDoc(doc(db, "batch_pride", p.id));
-                            }
-                          }}
-                          style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          🗑️ বাদ
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* মেম্বার ডিলিট তালিকা */}
-                <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({members.length} জন)</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '140px', overflowY: 'auto' }}>
-                    {members.map((m, idx) => (
-                      <div key={m.id} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                          <strong>{idx + 1}. {m.name}</strong> ({m.phone})<br/>
-                          <span style={{ color: '#64748B' }}>{m.area} • জার্সি: {m.tshirt}</span>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
-                              await deleteDoc(doc(db, "members", m.id));
-                            }
-                          }}
-                          style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          🗑️ বাদ
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
+                <button onClick={async () => {
+                  const payload: any = {};
+                  if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
+                  if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
+                  if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
+                  await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
+                  if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
+                  setNewNoticeInput('');
+                  setNewHistoryInput('');
+                  setNewApkUrlInput('');
+                  alert('সফলভাবে সেটিংস ও ডাউনলোড লিংক আপডেট হয়েছে!');
+                }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  সেটিংস ও ডাউনলোড লিংক সেভ করুন
+                </button>
               </div>
-            )}
+
+              {/* শিক্ষক-শিক্ষিকা তালিকা নিয়ন্ত্রণ ও ডিলিট বাটন */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
+                  <button onClick={() => setShowAddTeacherModal(true)} style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                    + নতুন শিক্ষক
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {teachers.map((t) => (
+                    <div key={t.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #A7F3D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{t.name}</strong> ({t.designation})<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? `| ${t.phone}` : ''}</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
+                            await deleteDoc(doc(db, "teachers", t.id));
+                          }
+                        }}
+                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+                      >
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* গৌরব তালিকা নিয়ন্ত্রণ (ডিলিট বাটন সহ) */}
+              <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {prideList.map((p) => (
+                    <div key={p.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #FEF08A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{p.name}</strong> - {p.profession}<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
+                            await deleteDoc(doc(db, "batch_pride", p.id));
+                          }
+                        }}
+                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+                      >
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* আসল ভেরিফাইড মেম্বার ডিলিট তালিকা */}
+              <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                  {allUsers.map((m, idx) => (
+                    <div key={m.uid} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong>{idx + 1}. {m.name}</strong> ({m.phone})<br/>
+                        <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
+                            await deleteDoc(doc(db, "users", m.uid));
+                          }
+                        }}
+                        style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+                      >
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
           </div>
         </div>
       )}
