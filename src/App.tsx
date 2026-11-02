@@ -1,3 +1,5 @@
+
+```tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp, getApps } from "firebase/app";
 import { 
@@ -855,7 +857,6 @@ export default function App() {
         timestamp: Date.now()
       });
 
-      // কমেন্ট সংখ্যা বৃদ্ধি
       const targetPost = posts.find(p => p.id === postId);
       if (targetPost) {
         await setDoc(doc(db, "posts", postId), { commentsCount: (targetPost.commentsCount || 0) + 1 }, { merge: true });
@@ -867,7 +868,7 @@ export default function App() {
     }
   };
 
-  // পোস্ট ডিলিট (পোস্টদাতা অথবা অ্যাডমিন)
+  // পোস্ট ডিলিট
   const handleDeletePost = async (postId: string, authorUid: string) => {
     if (!currentUser) return;
     const isAuthorized = currentUser.uid === authorUid || userProfile?.role === 'super_admin';
@@ -1345,9 +1346,7 @@ export default function App() {
       {/* মূল পেজসমূহ */}
       <main style={{ maxWidth: '500px', margin: '0 auto', padding: '12px' }}>
 
-        {/* ======================================================== */}
         {/* হোম ট্যাব: ফেসবুকের মতো সোশ্যাল টাইমলাইন ফিড */}
-        {/* ======================================================== */}
         {activeTab === 'home' && (
           <div>
             {/* নতুন পোস্ট তৈরির বক্স */}
@@ -1418,7 +1417,6 @@ export default function App() {
 
                   return (
                     <div key={post.id} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
-                      {/* পোস্টের হেডার */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                         <div>
                           <h4 style={{ margin: 0, fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{post.authorName}</h4>
@@ -1434,27 +1432,23 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* পোস্টের মূল বিষয়বস্তু */}
                       {post.content && (
                         <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#1E293B', lineHeight: '1.5', whiteSpace: 'pre-line' }}>
                           {post.content}
                         </p>
                       )}
 
-                      {/* ছবি থাকলে প্রদর্শন */}
                       {post.mediaUrl && (
                         <div style={{ borderRadius: '10px', overflow: 'hidden', marginBottom: '10px', backgroundColor: '#0F172A' }}>
                           <img src={post.mediaUrl} alt="Post Attachment" style={{ width: '100%', maxHeight: '350px', objectFit: 'contain', display: 'block' }} />
                         </div>
                       )}
 
-                      {/* লাইক ও কমেন্ট কাউন্টার বার */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px', marginBottom: '8px' }}>
                         <span>❤️ {(post.likes || []).length} জন লাইক দিয়েছেন</span>
                         <span>💬 {post.commentsCount || 0} টি মন্তব্য</span>
                       </div>
 
-                      {/* অ্যাকশন বাটনসমূহ (লাইক ও কমেন্ট) */}
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
                           onClick={() => handleToggleLike(post)}
@@ -1471,7 +1465,6 @@ export default function App() {
                         </button>
                       </div>
 
-                      {/* রিয়েল-টাইম কমেন্ট সেকশন (ড্রয়ার) */}
                       {activeCommentsPostId === post.id && (
                         <div style={{ marginTop: '10px', background: '#F8FAFC', borderRadius: '10px', padding: '10px', borderTop: '1px solid #E2E8F0' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', marginBottom: '8px' }}>
@@ -1955,3 +1948,208 @@ export default function App() {
               alert('অ্যাডমিন প্যানেলে প্রবেশের জন্য স্মার্ট রাসেল খানের অ্যাকাউন্টে লগইন থাকতে হবে।');
             }
           }}
+          style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '14px', padding: '10px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer' }}
+        >
+          <p style={{ margin: '0 0 2px 0', fontSize: '11px', color: '#137547', fontWeight: '800' }}>
+            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান {userProfile?.role === 'super_admin' ? '(👑 অ্যাডমিন এক্সেস)' : ''}
+          </p>
+          <p style={{ margin: '2px 0', fontSize: '10px', color: '#334155' }}>
+            সরাসরি যোগাযোগ: <a href="tel:01705374798" style={{ color: '#0A4D2E', fontWeight: '700', textDecoration: 'none' }}>01705374798</a>
+          </p>
+        </div>
+      </footer>
+
+      {/* বটম ন্যাভিগেশন বার */}
+      <nav style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: '#FFFFFF',
+        borderTop: '1px solid #E2E8F0',
+        display: 'flex',
+        justifyContent: 'space-around',
+        padding: '7px 0',
+        zIndex: 1000,
+        boxShadow: '0 -3px 12px rgba(0,0,0,0.05)'
+      }}>
+        <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'home' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏠</span><span>হোম</span>
+        </button>
+        <button onClick={() => setActiveTab('memories')} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'memories' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>📸</span><span>স্মৃতি</span>
+        </button>
+        <button onClick={() => setActiveTab('pride')} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'pride' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏆</span><span>গৌরব</span>
+        </button>
+        <button onClick={() => setActiveTab('directory')} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'directory' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>👥</span><span>সহপাঠী</span>
+        </button>
+        <button onClick={() => setActiveTab('school')} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span>
+        </button>
+        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>💬</span><span>আড্ডা</span>
+        </button>
+      </nav>
+
+      {/* অ্যাডমিন কন্ট্রোল প্যানেল */}
+      {showAdmin && userProfile?.role === 'super_admin' && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '16px', fontWeight: '800' }}>👑 অ্যাডমিন কন্ট্রোল প্যানেল</h3>
+              <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
+            </div>
+
+            <div>
+              {/* নোটিফিকেশন ব্রডকাস্ট */}
+              <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
+                <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
+                <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
+                <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                  {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
+                </button>
+              </div>
+
+              {/* হেডার ছবি পরিবর্তন */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
+                <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
+                <button onClick={() => bgFileInputRef.current?.click()} style={{ background: '#0D9488', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  গ্যালারি থেকে বন্ধুদের ছবি সিলেক্ট করুন 📷
+                </button>
+              </div>
+
+              {/* APK ডাউনলোড লিংক ও নোটিশ */}
+              <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
+                <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
+
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
+                <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
+
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট:</h4>
+                <textarea rows={2} value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box' }} />
+
+                <button onClick={async () => {
+                  const payload: any = {};
+                  if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
+                  if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
+                  if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
+
+                  await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
+                  if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
+                  setNewNoticeInput('');
+                  setNewHistoryInput('');
+                  setNewApkUrlInput('');
+                  alert('সেটিংস সফলভাবে সেভ হয়েছে!');
+                }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  সেভ ও পাবলিশ করুন
+                </button>
+              </div>
+
+              {/* শিক্ষক তালিকা নিয়ন্ত্রণ */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
+                  <button onClick={() => setShowAddTeacherModal(true)} style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                    + নতুন শিক্ষক
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {teachers.map((t) => (
+                    <div key={t.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #A7F3D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{t.name}</strong> ({t.designation})<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? `| ${t.phone}` : ''}</span>
+                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${t.name}"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "teachers", t.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* গৌরব তালিকা নিয়ন্ত্রণ */}
+              <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {prideList.map((p) => (
+                    <div key={p.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #FEF08A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{p.name}</strong> - {p.profession}<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
+                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${p.name}"-কে গৌরব তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "batch_pride", p.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* মেম্বার ডিলিট তালিকা */}
+              <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                  {allUsers.map((m, idx) => (
+                    <div key={m.uid} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong>{idx + 1}. {m.name}</strong> ({m.phone})<br/>
+                        <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
+                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm(`আপনি কি "${m.name}"-কে তালিকা থেকে বাদ দিতে চান?`)) {
+                          await deleteDoc(doc(db, "users", m.uid));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
+```
+
+এটি সেভ করে দেওয়ার পর বিল্ড সম্পন্ন হলে আপনার অ্যাপে ফেসবুকের মতো সম্পূর্ণ সোশ্যাল পোস্ট, লাইক ও রিয়েল-টাইম কমেন্ট সিস্টেম চালু হয়ে যাবে!
+Citations
+
+https://github.com/lemasieu/howlongareyouhavinglived
+Edited
+Model 2:57 AM
+ThinkingThoughts
+Analyzing the Problem
+I've zeroed in on the user's issue. They're on a mobile platform where the standard markdown copy button is absent from the code blocks. The focus is now on understanding their experience and the limitations of their current environment. It seems the core problem revolves around quickly grabbing the code snippets.
+Exploring the Copy Issue
+I'm now diving into potential solutions. Selection on mobile is tough, especially with lengthy code. I'm weighing options: direct RAW editing, Codespaces, raw links, automated workflows or even just providing snippets. The issue might be specific to mobile chat wrappers; some may not render the "Copy" button for long or specific code blocks.
+Devising Immediate Solutions
+I've crafted a user-friendly response. It starts with empathy for the mobile UI limitations. Then, I'm offering three simple ways to copy code: a long-press trick for mobile, direct GitHub paste, and raw links. My aim is to provide options that bypass the missing "Copy" button.
+Collapse to hide model thoughts
+
+chevron_right
+info
+Google AI models may make mistakes, so double-check outputs.
+Use Arrow Up and Arrow Down to select a turn, Enter to jump to it, and Escape to return to the chat.
+Start typing a prompt to see what our models can do
+
+
