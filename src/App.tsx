@@ -2127,24 +2127,3 @@ export default function App() {
   );
 }
 ```
-
-এটি সেভ করে দেওয়ার পর বিল্ড সম্পন্ন হলে আপনার অ্যাপে ফেসবুকের মতো সম্পূর্ণ সোশ্যাল পোস্ট, লাইক ও রিয়েল-টাইম কমেন্ট সিস্টেম চালু হয়ে যাবে!
-Citations
-
-https://github.com/lemasieu/howlongareyouhavinglived
-Edited
-Model 2:57 AM
-ThinkingThoughts
-Analyzing the Problem
-I've zeroed in on the user's issue. They're on a mobile platform where the standard markdown copy button is absent from the code blocks. The focus is now on understanding their experience and the limitations of their current environment. It seems the core problem revolves around quickly grabbing the code snippets.
-Exploring the Copy Issue
-I'm now diving into potential solutions. Selection on mobile is tough, especially with lengthy code. I'm weighing options: direct RAW editing, Codespaces, raw links, automated workflows or even just providing snippets. The issue might be specific to mobile chat wrappers; some may not render the "Copy" button for long or specific code blocks.
-Devising Immediate Solutions
-I've crafted a user-friendly response. It starts with empathy for the mobile UI limitations. Then, I'm offering three simple ways to copy code: a long-press trick for mobile, direct GitHub paste, and raw links. My aim is to provide options that bypass the missing "Copy" button.
-Collapse to hide model thoughts
-
-chevron_right
-info
-Google AI models may make mistakes, so double-check outputs.
-Use Arrow Up and Arrow Down to select a turn, Enter to jump to it, and Escape to return to the chat.
-Start typing a prompt to see what our models can do
