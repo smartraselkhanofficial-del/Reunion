@@ -24,12 +24,20 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Install Dependencies 
+      - name: Install Dependencies
         run: npm install
 
       - name: Build Web Assets
         run: |
-          sed -i 's/´/`/g' src/App.tsx
+          node -e '
+            const fs = require("fs");
+            let s = fs.readFileSync("src/App.tsx", "utf8");
+            s = s.replace(/[\u00b4\u02cb\u02ca\u2018\u2019\u201b\u201c\u201d]/g, "`");
+            s = s.replace(/triggerNativeNotification\([^;\n]*callData\.caller[^;\n]*\);/g, "triggerNativeNotification(\"📞 ইনকামিং অডিও কল\", \"আপনাকে কল দিচ্ছেন...\");");
+            s = s.replace(/triggerNativeNotification\([^;\n]*m\.name[^;\n]*\);/g, "triggerNativeNotification(\"🎉 নতুন সহপাঠী!\", \"নতুন বন্ধু যুক্ত হয়েছেন!\", \"🎓\");");
+            s = s.replace(/triggerNativeNotification\([^;\n]*m\.sender[^;\n]*\);/g, "triggerNativeNotification(\"💬 নতুন বার্তা\", \"মেসেজ এসেছে\", \"💬\");");
+            fs.writeFileSync("src/App.tsx", s);
+          '
           npm run build
 
       - name: Sync Capacitor Android
@@ -39,38 +47,17 @@ jobs:
 
       - name: Configure Permanent Release Key & Permissions
         run: |
-          # অ্যান্ড্রয়েড পারমিশন ইনজেকশন
-          sed -i '/<\/manifest>/i \
-              <uses-permission android:name="android.permission.INTERNET" />\
-              <uses-permission android:name="android.permission.CAMERA" />\
-              <uses-permission android:name="android.permission.RECORD_AUDIO" />\
-              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
-              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\
-              <uses-permission android:name="android.permission.VIBRATE" />\
-              <uses-permission android:name="android.permission.WAKE_LOCK" />' android/app/src/main/AndroidManifest.xml || true
-
-          # ভার্সন কোড বৃদ্ধি
           sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
-
-          # স্থায়ী ইউনিক রিলিজ কি-স্টোর তৈরি (একই কি থাকবে সবসময়)
           keytool -genkeypair -v -storetype PKCS12 -keystore android/app/sandikona_release.keystore -storepass Sandikona2027Pass -alias sandikona_key -keypass Sandikona2027Pass -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart Rasel Khan, OU=Reunion2027, O=Sandikona School, L=Kendua, ST=Netrokona, C=BD" || true
 
-      - name: Build Signed APK & Play Store Bundle (AAB)
+      - name: Build APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
-          # প্লে স্টোরে আপলোডের জন্য AAB ফাইলও তৈরি হবে
-          ./gradlew bundleRelease || true
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Reunion-2027-Official-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
-
-      - name: Upload Play Store AAB Bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: Reunion-2027-PlayStore-AAB
-          path: android/app/build/outputs/bundle/release/app-release.aab
