@@ -1,21 +1,16 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAnalytics } from "firebase/analytics";
+import { getAuth } from "firebase/auth";
 
-// ফায়ারবেস কনসোল থেকে পাওয়া আপনার কনফিগারেশন
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: "AIzaSyBuY0Ns2bX1RlSK8673LnSQWnNpMcEJhRw",
   authDomain: "reunion-2027-4cedf.firebaseapp.com",
   projectId: "reunion-2027-4cedf",
   storageBucket: "reunion-2027-4cedf.firebasestorage.app",
   messagingSenderId: "221061203254",
-  appId: "1:221061203254:web:834a0b5f60ced9429adf97",
-  measurementId: "G-Z5Z8FJGN4T"
+  appId: "1:221061203254:web:834a0b5f60ced9429adf97"
 };
 
-// Initialize Firebase
-export const app = initializeApp(firebaseConfig);
-export const analytics = getAnalytics(app);
-
-// Initialize Cloud Firestore (ডেটাবেজের জন্য)
+export const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 export const db = getFirestore(app);
+export const auth = getAuth(app);
