@@ -324,8 +324,8 @@ export default function App() {
       setAuthPhone('');
       setAuthPassword('');
       setAuthName('');
-      triggerNativeNotification("স্বাগতম!", `অভিনন্দন ${newProfile.name}, আপনার অ্যাকাউন্ট তৈরি হয়েছে।`);
-    } catch (err: any) {
+      triggerNativeNotification("স্বাগতম!", "অভিনন্দন, আপনার অ্যাকাউন্ট তৈরি হয়েছে!");   
+      } catch (err: any) {
       if (err.code === 'auth/email-already-in-use') {
         setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট তৈরি করা আছে। দয়া করে লগইন করুন।');
       } else {
