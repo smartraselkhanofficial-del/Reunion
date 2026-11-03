@@ -1,0 +1,70 @@
+export interface UserProfile {
+  uid: string;
+  name: string;
+  phone: string;
+  tshirt: string;
+  area: string;
+  village: string;
+  role: 'super_admin' | 'member';
+  createdAt: number;
+}
+
+export interface PostItem {
+  id: string;
+  authorUid: string;
+  authorName: string;
+  authorVillage: string;
+  content: string;
+  mediaUrl?: string;
+  likes: string[];
+  commentsCount: number;
+  timestamp: number;
+  dateStr: string;
+}
+
+export interface MemoryItem {
+  id: string;
+  uploader: string;
+  caption: string;
+  mediaUrl: string;
+  mediaType: 'image' | 'video';
+  timestamp: number;
+}
+
+export interface BatchPrideItem {
+  id: string;
+  name: string;
+  profession: string;
+  organization: string;
+  village: string;
+  fullAddress: string;
+  details: string;
+  phone: string;
+}
+
+export interface TeacherItem {
+  id: string;
+  name: string;
+  subject: string;
+  designation: string;
+  phone?: string;
+}
+
+export interface ChatMsg {
+  id: string;
+  sender: string;
+  senderUid?: string;
+  text?: string;
+  fileUrl?: string;
+  fileType?: string;
+  fileName?: string;
+  timestamp: number;
+  time: string;
+}
+
+export interface ActiveCall {
+  id: string;
+  caller: string;
+  status: 'ringing' | 'connected' | 'ended';
+  timestamp: number;
+}
