@@ -32,10 +32,10 @@ jobs:
           node -e '
             const fs = require("fs");
             let s = fs.readFileSync("src/App.tsx", "utf8");
-            s = s.replace(/[\u00b4\u02cb\u02ca\u2018\u2019\u201b\u201c\u201d]/g, "`");
-            s = s.replace(/triggerNativeNotification\([^;\n]*callData\.caller[^;\n]*\);/g, "triggerNativeNotification(\"📞 ইনকামিং অডিও কল\", \"আপনাকে কল দিচ্ছেন...\");");
-            s = s.replace(/triggerNativeNotification\([^;\n]*m\.name[^;\n]*\);/g, "triggerNativeNotification(\"🎉 নতুন সহপাঠী!\", \"নতুন বন্ধু যুক্ত হয়েছেন!\", \"🎓\");");
-            s = s.replace(/triggerNativeNotification\([^;\n]*m\.sender[^;\n]*\);/g, "triggerNativeNotification(\"💬 নতুন বার্তা\", \"মেসেজ এসেছে\", \"💬\");");
+            // ৫৮১ নম্বর লাইনের `${m}:${s}` সাধারণ প্লাস দিয়ে অটো রিপ্লেস
+            s = s.replace(/return\s*[`\uff40´\x27\x22].*?\$\{m\}.*?\$\{s\}.*?[`\uff40´\x27\x22];/g, "return m + \":\" + s;");
+            // মোবাইলের সব এশিয়ান ফুলউইথ ব্যাকটিক (\uff40) আসল ব্যাকটিকে রূপান্তর
+            s = s.replace(/[\uff40\u00b4\u02cb\u02ca\u2018\u2019\u201b\u2032\u2035\u0300\u0301]/g, "`");
             fs.writeFileSync("src/App.tsx", s);
           '
           npm run build
