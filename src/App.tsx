@@ -280,12 +280,10 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
-
   const phoneToEmail = (rawPhone: string) => {
     const clean = rawPhone.replace(/[^\d]/g, '');
-    return `${clean}@sandikona2014.org`;
+    return clean + '@sandikona2014.org';
   };
-
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
