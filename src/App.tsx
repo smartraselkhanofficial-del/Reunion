@@ -1,4 +1,3 @@
-```tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   collection, 
@@ -300,24 +299,6 @@ export default function App() {
       setNotifPermission(Notification.permission);
     }
   }, []);
-
-  const requestAllAppPermissions = async () => {
-    if ("Notification" in window) {
-      try {
-        const perm = await Notification.requestPermission();
-        setNotifPermission(perm);
-        if (perm === 'granted') {
-          triggerNativeNotification("পুনর্মিলনী ২০২৭", "সব নোটিফিকেশন এখন আপনার মোবাইলের নোটিফিকেশন বারে পৌঁছাবে।");
-        }
-      } catch (e) {}
-    }
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(t => t.stop());
-      } catch (e) {}
-    }
-  };
 
   const playChimeSound = () => {
     try {
@@ -2000,6 +1981,3 @@ export default function App() {
     </div>
   );
 }
-```
-
----
