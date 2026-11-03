@@ -1,4 +1,3 @@
-
 ```tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp, getApps } from "firebase/app";
