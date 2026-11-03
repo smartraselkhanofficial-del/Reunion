@@ -2150,5 +2150,3 @@ info
 Google AI models may make mistakes, so double-check outputs.
 Use Arrow Up and Arrow Down to select a turn, Enter to jump to it, and Escape to return to the chat.
 Start typing a prompt to see what our models can do
-
-
