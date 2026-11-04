@@ -25,10 +25,12 @@ import {
   MemoryItem, 
   BatchPrideItem, 
   TeacherItem, 
+  ChatMsg, 
   ActiveCall 
 } from "./types";
 import ChatRoom from "./components/ChatRoom";
 import VoiceRoom from "./components/VoiceRoom";
+import NotificationCenter from "./components/NotificationCenter";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
@@ -82,13 +84,17 @@ export default function App() {
   const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
 
-  // নোটিফিকেশন
+  // নোটিফিকেশন হাব স্টেট
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
+  
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
   const isInitialMembers = useRef(false);
+  const isInitialAdminNotifs = useRef(false);
 
-  // ১-অন-১ অডিও কল
+  // কলিং
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
   const [currentCallSession, setCurrentCallSession] = useState<ActiveCall | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -98,6 +104,11 @@ export default function App() {
 
   // অ্যাডমিন
   const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [clickCount, setClickCount] = useState(0);
+  const ADMIN_PIN = '74798';
+
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newHistoryInput, setNewHistoryInput] = useState('');
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
@@ -105,7 +116,7 @@ export default function App() {
   const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
 
-  // স্মৃতি আপলোড
+  // মেমোরি আপলোড
   const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
   const [memCaption, setMemCaption] = useState('');
   const [selectedMemFile, setSelectedMemFile] = useState<File | null>(null);
@@ -345,7 +356,7 @@ export default function App() {
     setTimeout(() => setActiveToast(null), 6000);
   };
 
-  // ১-অন-১ অডিও কলিং
+  // অডিও কলিং
   const startRingtone = () => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -396,7 +407,6 @@ export default function App() {
         }
       });
     });
-
     return () => unsubCalls();
   }, [userProfile]);
 
@@ -491,6 +501,7 @@ export default function App() {
           if (c.type === "added") {
             const m = c.doc.data() as UserProfile;
             triggerNativeNotification("🎉 নতুন সহপাঠী যুক্ত হয়েছেন!", m.name + " (" + (m.village || m.area) + ") পুনর্মিলনীতে যোগ দিয়েছেন।", "🎓");
+            setUnreadNotifCount(p => p + 1);
           }
         });
       } else {
@@ -524,6 +535,21 @@ export default function App() {
       setTeachers(list);
     });
 
+    const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
+    const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
+      if (isInitialAdminNotifs.current) {
+        snap.docChanges().forEach((c) => {
+          if (c.type === "added") {
+            const d = c.doc.data();
+            triggerNativeNotification(d.title || "📢 অ্যাডমিন বার্তা", d.body || "", "📢");
+            setUnreadNotifCount(p => p + 1);
+          }
+        });
+      } else {
+        isInitialAdminNotifs.current = true;
+      }
+    });
+
     const unsubSettings = onSnapshot(doc(db, "settings", "app_config"), (d) => {
       if (d.exists()) {
         const data = d.data();
@@ -540,9 +566,10 @@ export default function App() {
       unsubMemories();
       unsubPride();
       unsubTeachers();
+      unsubAdminBroadcast();
       unsubSettings();
     };
-  }, [currentUser]);
+  }, []);
 
   useEffect(() => {
     if (!activeCommentsPostId) {
@@ -564,7 +591,6 @@ export default function App() {
     return () => unsubComments();
   }, [activeCommentsPostId]);
 
-  // পোস্ট হ্যান্ডলার
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -596,9 +622,9 @@ export default function App() {
       setNewPostText('');
       setNewPostFile(null);
       if (postFileInputRef.current) postFileInputRef.current.value = '';
-      alert('পোস্ট টাইমলাইনে প্রকাশিত হয়েছে!');
+      alert('আপনার পোস্টটি টাইমলাইনে সফলভাবে প্রকাশিত হয়েছে!');
     } catch (err) {
-      alert('পোস্ট করতে সমস্যা হয়েছে।');
+      alert('পোস্ট প্রকাশ করতে সমস্যা হয়েছে।');
     } finally {
       setIsPosting(false);
     }
@@ -619,7 +645,9 @@ export default function App() {
 
     try {
       await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
-    } catch (e) {}
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleAddComment = async (e: React.FormEvent, postId: string) => {
@@ -645,9 +673,7 @@ export default function App() {
       }
 
       setCommentInput('');
-    } catch (e) {
-      alert('মন্তব্য পোস্ট করা যায়নি।');
-    }
+    } catch (e) {}
   };
 
   const handleDeletePost = async (postId: string, authorUid: string) => {
@@ -663,9 +689,7 @@ export default function App() {
     try {
       await deleteDoc(doc(db, "posts", postId));
       alert('পোস্টটি মুছে ফেলা হয়েছে।');
-    } catch (err) {
-      alert('ডিলিট করা যায়নি।');
-    }
+    } catch (err) {}
   };
 
   const handleUploadMemoryFree = async (e: React.FormEvent) => {
@@ -709,9 +733,7 @@ export default function App() {
       setHeaderBgUrl(compressedBg);
       await setDoc(doc(db, "settings", "app_config"), { headerBg: compressedBg }, { merge: true });
       alert('হেডার ব্যাকগ্রাউন্ড ছবি সবার জন্য লাইভ আপডেট হয়েছে!');
-    } catch (err) {
-      alert('ছবি আপলোডে সমস্যা হয়েছে।');
-    }
+    } catch (err) {}
   };
 
   const handleAddPrideSubmit = async (e: React.FormEvent) => {
@@ -737,9 +759,7 @@ export default function App() {
       setPrideDetails('');
       setPridePhone('');
       alert('ব্যাচের গৌরবে যুক্ত হয়েছে!');
-    } catch (e) {
-      alert('ব্যর্থ হয়েছে।');
-    }
+    } catch (e) {}
   };
 
   const handleAddTeacherSubmit = async (e: React.FormEvent) => {
@@ -773,16 +793,14 @@ export default function App() {
       setAdminBroadcastTitle('');
       setAdminBroadcastMsg('');
       alert('সবার ফোনের নোটিফিকেশন বারে পৌঁছে গেছে!');
-    } catch (err) {
-      alert('ব্যর্থ হয়েছে।');
-    } finally {
+    } catch (err) {} finally {
       setIsSendingBroadcast(false);
     }
   };
 
   const handleShareApp = async () => {
     const finalDownloadUrl = apkDownloadUrl.trim() || 'https://github.com';
-    const shareText = "🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে এখনই যুক্ত হোন ও স্মৃতি শেয়ার করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n" + finalDownloadUrl;
+    const shareText = "🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে যুক্ত হোন ও স্মৃতি শেয়ার করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n" + finalDownloadUrl;
     if (navigator.share) {
       try { await navigator.share({ title: 'পুনর্মিলনী ২০২৭ - এসএসসি ২০১৪', text: shareText }); } catch (err) {}
     } else {
@@ -817,6 +835,14 @@ export default function App() {
       margin: 0,
       userSelect: 'none'
     }}>
+
+      <NotificationCenter 
+        isOpen={showNotificationCenter}
+        onClose={() => setShowNotificationCenter(false)}
+        onItemClick={(type) => {
+          if (type === 'admin') setActiveTab('home');
+        }}
+      />
 
       {/* ড্রপ-ডাউন ব্যানার অ্যালার্ট */}
       {activeToast && (
@@ -976,7 +1002,34 @@ export default function App() {
           <span style={{ color: '#FCD34D' }}>⚠️ অ্যাকাউন্টে লগইন করা নেই</span>
         )}
 
-        <div>
+        {/* 🔔 নোটিফিকেশন বেল আইকন */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div 
+            onClick={() => {
+              setShowNotificationCenter(true);
+              setUnreadNotifCount(0); // ড্রয়ার খুললে কাউন্ট জিরো হয়ে যাবে
+            }} 
+            style={{ position: 'relative', cursor: 'pointer' }}
+          >
+            <span style={{ fontSize: '18px' }}>🔔</span>
+            {unreadNotifCount > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-4px',
+                right: '-6px',
+                background: '#EF4444',
+                color: '#fff',
+                borderRadius: '50%',
+                padding: '2px 5px',
+                fontSize: '9px',
+                fontWeight: '900',
+                border: '1.5px solid #062B1A'
+              }}>
+                {unreadNotifCount}
+              </span>
+            )}
+          </div>
+
           {currentUser ? (
             <button onClick={handleLogout} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
               লগআউট
@@ -1209,7 +1262,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* ফেসবুকের মতো পোস্ট ফিড */}
+            {/* ফেসবুকের মতো লাইভ টাইমলাইন পোস্টের তালিকা */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
               {posts.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B', fontSize: '12px' }}>
@@ -1318,14 +1371,18 @@ export default function App() {
               ) : (
                 <div>
                   <div style={{ position: 'relative', height: '170px', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#0F172A' }}>
-                    <img src={memories[currentSlideIndex].mediaUrl} alt="Memory" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    {memories[currentSlideIndex].mediaType === 'image' ? (
+                      <img src={memories[currentSlideIndex].mediaUrl} alt="Memory" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <video src={memories[currentSlideIndex].mediaUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted autoPlay loop playsInline />
+                    )}
                     <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', padding: '8px 10px', color: '#FFFFFF' }}>
                       <p style={{ margin: '0 0 2px 0', fontSize: '11px', fontWeight: '700' }}>{memories[currentSlideIndex].caption}</p>
                       <span style={{ fontSize: '9px', color: '#FEF08A' }}>👤 শেয়ার করেছেন: {memories[currentSlideIndex].uploader}</span>
                     </div>
                   </div>
                   <button onClick={() => setActiveTab('memories')} style={{ width: '100%', marginTop: '8px', background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '8px', borderRadius: '10px', fontWeight: '800', fontSize: '11px', cursor: 'pointer' }}>
-                    📸 সমস্ত স্মৃতি দেখতে ক্লিক করুন ({memories.length}টি) →
+                    📸 সমস্ত স্মৃতি ও ভিডিও দেখতে ক্লিক করুন ({memories.length}টি) →
                   </button>
                 </div>
               )}
@@ -1334,13 +1391,23 @@ export default function App() {
             {/* কাউন্টার কার্ড */}
             <div onClick={() => setActiveTab('directory')} style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '2px solid #BBF7D0', textAlign: 'center', marginBottom: '12px', cursor: 'pointer' }}>
               <span style={{ fontSize: '12px', color: '#137547', fontWeight: '700' }}>এসএসসি ব্যাচ ২০১৪</span>
-              <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : (allUsers.length + " জন")}</h2>
+              <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : `${allUsers.length} জন`}</h2>
               <span style={{ fontSize: '11px', color: '#0284C7', fontWeight: '700', textDecoration: 'underline' }}>👉 সকল সহপাঠীর তালিকা দেখতে ক্লিক করুন</span>
+            </div>
+
+            {/* ভেন্যু কার্ড */}
+            <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h3 style={{ margin: 0, fontSize: '14px', color: '#0A4D2E', fontWeight: '800' }}>📅 পুনর্মিলনীর সময় ও ভেন্যু</h3>
+                <span style={{ fontSize: '9px', backgroundColor: '#FEF3C7', color: '#B45309', padding: '3px 6px', borderRadius: '6px', fontWeight: '700' }}>নির্ধারিত</span>
+              </div>
+              <p style={{ fontSize: '12px', margin: '4px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ</p>
+              <p style={{ fontSize: '12px', margin: '4px 0', color: '#137547', fontWeight: '700' }}>⏰ <strong>তারিখ:</strong> পবিত্র ঈদুল আজহা ২০২৭</p>
             </div>
           </div>
         )}
 
-        {/* খ. স্মৃতি গ্যালারি */}
+        {/* খ. স্মৃতি গ্যালারি (ডাউনলোড ও স্ক্রিনশট প্রটেকশন সহ) */}
         {activeTab === 'memories' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1360,7 +1427,11 @@ export default function App() {
                 {memories.map((item) => (
                   <div key={item.id} style={{ background: '#FFFFFF', borderRadius: '14px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
                     <div onContextMenu={(e) => e.preventDefault()} style={{ position: 'relative', width: '100%', backgroundColor: '#000000', userSelect: 'none' }}>
-                      <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
+                      {item.mediaType === 'image' ? (
+                        <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
+                      ) : (
+                        <video src={item.mediaUrl} controls controlsList="nodownload noplaybackrate" disablePictureInPicture style={{ width: '100%', maxHeight: '350px', display: 'block' }} />
+                      )}
                       <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.55)', color: '#FEF08A', fontSize: '8px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
                         সান্দিকোনা ২০১৪ স্মৃতি
                       </div>
@@ -1378,7 +1449,7 @@ export default function App() {
           </div>
         )}
 
-        {/* গ. ব্যাচের গৌরব */}
+        {/* গ. ব্যাচের গৌরব (গ্রাম ও ফুল এড্রেস সহ) */}
         {activeTab === 'pride' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1486,13 +1557,14 @@ export default function App() {
                 {filteredMembers.map((m) => (
                   <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <h4 style={{ margin: 0, fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
+                      <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
                       <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
                       <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
                     </div>
 
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '4px 6px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
+                      {/* ১-অন-১ পার্সোনাল চ্যাট বাটন */}
                       <button
                         onClick={() => startPrivateChat(m)}
                         style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
@@ -1751,6 +1823,7 @@ export default function App() {
             </div>
 
             <div>
+              {/* নোটিফিকেশন ব্রডকাস্ট */}
               <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
                 <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
@@ -1760,6 +1833,7 @@ export default function App() {
                 </button>
               </div>
 
+              {/* হেডার ছবি পরিবর্তন */}
               <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
                 <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
@@ -1768,6 +1842,7 @@ export default function App() {
                 </button>
               </div>
 
+              {/* APK ডাউনলোড লিংক ও নোটিশ */}
               <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
                 <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
