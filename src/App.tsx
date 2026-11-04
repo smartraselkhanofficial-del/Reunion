@@ -25,9 +25,9 @@ import {
   MemoryItem, 
   BatchPrideItem, 
   TeacherItem, 
-  ChatMsg, 
   ActiveCall 
 } from "./types";
+import ChatRoom from "./components/ChatRoom";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
@@ -48,6 +48,9 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
+  // ১-অন-১ ব্যক্তিগত চ্যাটের টার্গেট ইউজার
+  const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
+
   // সোশ্যাল টাইমলাইন পোস্ট স্টেটস
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
@@ -63,7 +66,6 @@ export default function App() {
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
-  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
 
   // সেটিংস
   const [announcement, setAnnouncement] = useState('পবিত্র ঈদুল আজহা ২০২৭ উপলক্ষে সান্দিকোনা স্কুল এন্ড কলেজের এসএসসি ২০১৪ ব্যাচের পুনর্মিলনী অনুষ্ঠিত হবে।');
@@ -83,8 +85,6 @@ export default function App() {
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
   const isInitialMembers = useRef(false);
-  const isInitialMessages = useRef(false);
-  const isInitialAdminNotifs = useRef(false);
 
   // কলিং
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
@@ -125,15 +125,7 @@ export default function App() {
   const [teachDesig, setTeachDesig] = useState('');
   const [teachPhone, setTeachPhone] = useState('');
 
-  // চ্যাট
-  const [msgInput, setMsgInput] = useState('');
-  const [selectedChatFile, setSelectedChatFile] = useState<File | null>(null);
-  const [chatUploadProgress, setChatUploadProgress] = useState<string | null>(null);
-  const [typingUser, setTypingUser] = useState<string | null>(null);
-  const typingTimeoutRef = useRef<any>(null);
-  const chatFileInputRef = useRef<HTMLInputElement>(null);
   const bgFileInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
@@ -300,6 +292,24 @@ export default function App() {
     }
   }, []);
 
+  const requestAllAppPermissions = async () => {
+    if ("Notification" in window) {
+      try {
+        const perm = await Notification.requestPermission();
+        setNotifPermission(perm);
+        if (perm === 'granted') {
+          triggerNativeNotification("পুনর্মিলনী ২০২৭", "সব নোটিফিকেশন এখন আপনার মোবাইলের নোটিফিকেশন বারে পৌঁছাবে।");
+        }
+      } catch (e) {}
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      } catch (e) {}
+    }
+  };
+
   const playChimeSound = () => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -460,7 +470,7 @@ export default function App() {
     return m + ":" + s;
   };
 
-  // লাইভ ঘড়ি ও ব্যাচ টাইম কাউন্টার
+  // লাইভ সময় ও কাউন্টার
   useEffect(() => {
     const sscDate = new Date('2014-05-17T00:00:00');
     const update = () => {
@@ -501,7 +511,7 @@ export default function App() {
     }
   }, [memories.length]);
 
-  // ফায়ারবেস ডেটা লিসেনার
+  // ডেটাবেস লিসেনার
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
@@ -547,40 +557,6 @@ export default function App() {
       setTeachers(list);
     });
 
-    const qMessages = query(collection(db, "messages"), orderBy("timestamp", "asc"));
-    const unsubChat = onSnapshot(qMessages, (snap) => {
-      const msgs: ChatMsg[] = [];
-      snap.forEach(d => msgs.push({ id: d.id, ...d.data() } as ChatMsg));
-      setChatMessages(msgs);
-
-      if (isInitialMessages.current) {
-        snap.docChanges().forEach((c) => {
-          if (c.type === "added") {
-            const m = c.doc.data() as ChatMsg;
-            if (m.senderUid !== currentUser?.uid) {
-              triggerNativeNotification("💬 " + m.sender, m.text || "📷 মিডিয়া পাঠিয়েছেন", "💬");
-            }
-          }
-        });
-      } else {
-        isInitialMessages.current = true;
-      }
-    });
-
-    const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
-    const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
-      if (isInitialAdminNotifs.current) {
-        snap.docChanges().forEach((c) => {
-          if (c.type === "added") {
-            const d = c.doc.data();
-            triggerNativeNotification(d.title || "📢 অ্যাডমিন বার্তা", d.body || "", "📢");
-          }
-        });
-      } else {
-        isInitialAdminNotifs.current = true;
-      }
-    });
-
     const unsubSettings = onSnapshot(doc(db, "settings", "app_config"), (d) => {
       if (d.exists()) {
         const data = d.data();
@@ -591,29 +567,15 @@ export default function App() {
       }
     });
 
-    const unsubTyping = onSnapshot(doc(db, "settings", "typing"), (d) => {
-      if (d.exists()) {
-        const data = d.data();
-        if (data?.user && data.user !== userProfile?.name && Date.now() - data.time < 3500) {
-          setTypingUser(data.user);
-        } else {
-          setTypingUser(null);
-        }
-      }
-    });
-
     return () => {
       unsubUsers();
       unsubPosts();
       unsubMemories();
       unsubPride();
       unsubTeachers();
-      unsubChat();
-      unsubAdminBroadcast();
       unsubSettings();
-      unsubTyping();
     };
-  }, [currentUser, userProfile]);
+  }, [currentUser]);
 
   useEffect(() => {
     if (!activeCommentsPostId) {
@@ -635,11 +597,7 @@ export default function App() {
     return () => unsubComments();
   }, [activeCommentsPostId]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, activeTab]);
-
-  // সোশ্যাল পোস্ট হ্যান্ডলার
+  // পোস্ট হ্যান্ডলার
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -671,9 +629,9 @@ export default function App() {
       setNewPostText('');
       setNewPostFile(null);
       if (postFileInputRef.current) postFileInputRef.current.value = '';
-      alert('আপনার পোস্টটি টাইমলাইনে সফলভাবে প্রকাশিত হয়েছে!');
+      alert('পোস্ট টাইমলাইনে প্রকাশিত হয়েছে!');
     } catch (err) {
-      alert('পোস্ট প্রকাশ করতে সমস্যা হয়েছে।');
+      alert('পোস্ট করতে সমস্যা হয়েছে।');
     } finally {
       setIsPosting(false);
     }
@@ -777,49 +735,6 @@ export default function App() {
     }
   };
 
-  const handleSendChatFree = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser || !userProfile) {
-      alert('মেসেজ পাঠাতে লগইন করুন।');
-      setShowAuthModal(true);
-      return;
-    }
-    if (!msgInput.trim() && !selectedChatFile) return;
-
-    if (selectedChatFile) {
-      setChatUploadProgress('ছবি অপ্টিমাইজ হচ্ছে...');
-      try {
-        const finalUrl = await compressImage(selectedChatFile);
-        await addDoc(collection(db, "messages"), {
-          sender: userProfile.name,
-          senderUid: currentUser.uid,
-          text: msgInput.trim() || '',
-          fileUrl: finalUrl,
-          fileType: selectedChatFile.type,
-          fileName: selectedChatFile.name,
-          timestamp: Date.now(),
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        });
-        setChatUploadProgress(null);
-        setSelectedChatFile(null);
-        setMsgInput('');
-        if (chatFileInputRef.current) chatFileInputRef.current.value = '';
-      } catch (err) {
-        alert('ছবি পাঠাতে সমস্যা হয়েছে।');
-        setChatUploadProgress(null);
-      }
-    } else {
-      await addDoc(collection(db, "messages"), {
-        sender: userProfile.name,
-        senderUid: currentUser.uid,
-        text: msgInput.trim(),
-        timestamp: Date.now(),
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      });
-      setMsgInput('');
-    }
-  };
-
   const handleHeaderBgUploadFree = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -909,6 +824,21 @@ export default function App() {
       navigator.clipboard.writeText(shareText);
       alert('অ্যাপের ডাউনলোড লিংক ও দাওয়াত কপি করা হয়েছে!');
     }
+  };
+
+  // ১-অন-১ চ্যাট ওপেন করার হ্যান্ডলার
+  const startPrivateChat = (member: UserProfile) => {
+    if (!currentUser) {
+      alert('মেসেজ পাঠাতে প্রথমে লগইন করুন।');
+      setShowAuthModal(true);
+      return;
+    }
+    if (member.uid === currentUser.uid) {
+      alert('আপনি নিজের সাথে চ্যাট করতে পারবেন না!');
+      return;
+    }
+    setPrivateChatRecipient(member);
+    setActiveTab('chat');
   };
 
   const filteredMembers = allUsers.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.area.toLowerCase().includes(searchQuery.toLowerCase()) || m.village.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -1086,7 +1016,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* বড় ব্যানার শুধু HOME ট্যাবে থাকবে */}
+      {/* হোম ব্যানার */}
       {activeTab === 'home' ? (
         <>
           <div style={{
@@ -1181,7 +1111,7 @@ export default function App() {
         </>
       ) : (
         <div style={{ background: '#0A4D2E', color: '#FFFFFF', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #D4AF37' }}>
-          <button onClick={() => setActiveTab('home')} style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}>
+          <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}>
             ← হোমে ফিরুন
           </button>
           <span style={{ fontSize: '13px', fontWeight: '800' }}>
@@ -1189,7 +1119,7 @@ export default function App() {
             {activeTab === 'pride' && '🏆 আমাদের ব্যাচের গৌরব'}
             {activeTab === 'directory' && '👥 সহপাঠীদের তালিকা'}
             {activeTab === 'school' && '🏫 বিদ্যালয় ও শিক্ষক পরিচিতি'}
-            {activeTab === 'chat' && '💬 এসএসসি ২০১৪ আড্ডা'}
+            {activeTab === 'chat' && (privateChatRecipient ? ('💬 ' + privateChatRecipient.name) : '💬 ব্যাচ গ্রুপ আড্ডা')}
           </span>
           <span style={{ fontSize: '11px', color: '#A7F3D0' }}>ব্যাচ ২০১৪</span>
         </div>
@@ -1198,10 +1128,9 @@ export default function App() {
       {/* মূল পেজসমূহ */}
       <main style={{ maxWidth: '500px', margin: '0 auto', padding: '12px' }}>
 
-        {/* হোম ট্যাব: ফেসবুকের মতো সোশ্যাল টাইমলাইন ফিড */}
+        {/* হোম টাইমলাইন পোস্ট */}
         {activeTab === 'home' && (
           <div>
-            {/* নতুন পোস্ট তৈরির বক্স */}
             <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '18px' }}>✍️</span>
@@ -1256,7 +1185,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* ফেসবুকের মতো লাইভ টাইমলাইন পোস্টের তালিকা */}
+            {/* ফেসবুকের মতো পোস্ট ফিড */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
               {posts.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B', fontSize: '12px' }}>
@@ -1384,20 +1313,10 @@ export default function App() {
               <h2 style={{ fontSize: '30px', margin: '2px 0', color: '#0A4D2E', fontWeight: '900' }}>{isLoading ? '...' : (allUsers.length + " জন")}</h2>
               <span style={{ fontSize: '11px', color: '#0284C7', fontWeight: '700', textDecoration: 'underline' }}>👉 সকল সহপাঠীর তালিকা দেখতে ক্লিক করুন</span>
             </div>
-
-            {/* ভেন্যু কার্ড */}
-            <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h3 style={{ margin: 0, fontSize: '14px', color: '#0A4D2E', fontWeight: '800' }}>📅 পুনর্মিলনীর সময় ও ভেন্যু</h3>
-                <span style={{ fontSize: '9px', backgroundColor: '#FEF3C7', color: '#B45309', padding: '3px 6px', borderRadius: '6px', fontWeight: '700' }}>নির্ধারিত</span>
-              </div>
-              <p style={{ fontSize: '12px', margin: '4px 0', color: '#334155' }}>📍 <strong>ভেন্যু:</strong> সান্দিকোনা স্কুল এন্ড কলেজ মাঠ</p>
-              <p style={{ fontSize: '12px', margin: '4px 0', color: '#137547', fontWeight: '700' }}>⏰ <strong>তারিখ:</strong> পবিত্র ঈদুল আজহা ২০২৭</p>
-            </div>
           </div>
         )}
 
-        {/* স্মৃতি গ্যালারি */}
+        {/* খ. স্মৃতি গ্যালারি */}
         {activeTab === 'memories' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1435,7 +1354,7 @@ export default function App() {
           </div>
         )}
 
-        {/* ব্যাচের গৌরব */}
+        {/* গ. ব্যাচের গৌরব */}
         {activeTab === 'pride' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -1489,7 +1408,7 @@ export default function App() {
           </div>
         )}
 
-        {/* বিদ্যালয়ের ইতিহাস ও শিক্ষক */}
+        {/* ঘ. বিদ্যালয়ের ইতিহাস ও শিক্ষক */}
         {activeTab === 'school' && (
           <div>
             <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '1px solid #E2E8F0', marginBottom: '14px' }}>
@@ -1525,7 +1444,7 @@ export default function App() {
           </div>
         )}
 
-        {/* সহপাঠী ডিরেক্টরি */}
+        {/* ঙ. সহপাঠী ডিরেক্টরি (১-অন-১ চ্যাট বাটন সহ) */}
         {activeTab === 'directory' && (
           <div>
             <div style={{ marginBottom: '10px' }}>
@@ -1547,7 +1466,17 @@ export default function App() {
                       <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
                       <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
                     </div>
-                    <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '3px 8px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
+
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '4px 6px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
+                      {/* ১-অন-১ পার্সোনাল চ্যাট বাটন */}
+                      <button
+                        onClick={() => startPrivateChat(m)}
+                        style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                      >
+                        💬 ইনবক্স
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1555,72 +1484,16 @@ export default function App() {
           </div>
         )}
 
-        {/* হোয়াটসঅ্যাপ আড্ডা */}
+        {/* চ. চ্যাটরুম (গ্রুপ বা ১-অন-১ প্রাইভেট চ্যাট) */}
         {activeTab === 'chat' && (
-          <div style={{ background: '#E5DDD5', borderRadius: '16px', border: '1px solid #CBD5E1', height: '72vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '8px 12px', background: '#075E54', color: '#FFFFFF', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#128C7E', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px' }}>👥</div>
-                <div>
-                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: '700' }}>এসএসসি ২০১৪ আড্ডা</h4>
-                  <span style={{ fontSize: '9px', color: '#D1FAE5' }}>{typingUser ? ("✍️ " + typingUser + " লিখছেন...") : 'অনলাইন চ্যাট'}</span>
-                </div>
-              </div>
-
-              <button onClick={initiateCallToAll} style={{ background: '#25D366', border: 'none', color: '#FFFFFF', padding: '6px 12px', borderRadius: '20px', cursor: 'pointer', fontSize: '11px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span>📞</span> অডিও কল
-              </button>
-            </div>
-
-            {!currentUser || !userProfile ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '20px', textAlign: 'center' }}>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: '15px' }}>আড্ডায় প্রবেশ করতে লগইন করুন</h4>
-                <p style={{ fontSize: '12px', color: '#64748B', marginBottom: '12px' }}>মেসেজ দেওয়া ও অডিও কলে কথা বলতে আপনার অ্যাকাউন্ট লাগবে।</p>
-                <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: '700', cursor: 'pointer' }}>
-                  লগইন / সাইন আপ করুন
-                </button>
-              </div>
-            ) : (
-              <>
-                <div style={{ flex: 1, padding: '10px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {chatMessages.map((m) => {
-                    const isMe = m.senderUid === currentUser.uid;
-                    return (
-                      <div key={m.id} style={{ alignSelf: isMe ? 'flex-end' : 'flex-start', maxWidth: '82%', backgroundColor: isMe ? '#DCF8C6' : '#FFFFFF', borderRadius: '12px', padding: '8px 10px', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' }}>
-                        {!isMe && <span style={{ fontSize: '9px', color: '#075E54', fontWeight: '800', display: 'block', marginBottom: '2px' }}>{m.sender}</span>}
-                        {m.fileUrl && <img src={m.fileUrl} alt="Attached" style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '8px', display: 'block', marginBottom: '4px' }} />}
-                        {m.text && <p style={{ margin: 0, fontSize: '12px', color: '#1E293B', wordBreak: 'break-word' }}>{m.text}</p>}
-                        <span style={{ fontSize: '8px', color: '#94A3B8', float: 'right', marginTop: '2px', marginLeft: '6px' }}>{m.time} <span style={{ color: '#34B7F1' }}>✓✓</span></span>
-                      </div>
-                    );
-                  })}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {chatUploadProgress && (
-                  <div style={{ padding: '6px 12px', background: '#DCFCE7', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
-                    {chatUploadProgress}
-                  </div>
-                )}
-
-                <form onSubmit={handleSendChatFree} style={{ display: 'flex', alignItems: 'center', padding: '6px', background: '#F0F2F5', borderTop: '1px solid #CBD5E1', gap: '6px' }}>
-                  <input type="file" ref={chatFileInputRef} onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) setSelectedChatFile(file);
-                  }} accept="image/*" style={{ display: 'none' }} />
-                  <button type="button" onClick={() => chatFileInputRef.current?.click()} style={{ border: 'none', background: selectedChatFile ? '#10B981' : '#E2E8F0', color: selectedChatFile ? '#fff' : '#000', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}>
-                    {selectedChatFile ? '✓' : '📎'}
-                  </button>
-                  <input type="text" placeholder={selectedChatFile ? ("সংযুক্ত: " + selectedChatFile.name) : "মেসেজ লিখুন..."} value={msgInput} onChange={(e) => {
-                    setMsgInput(e.target.value);
-                    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-                    setDoc(doc(db, "settings", "typing"), { user: userProfile?.name, time: Date.now() });
-                    typingTimeoutRef.current = setTimeout(() => setDoc(doc(db, "settings", "typing"), { user: null, time: 0 }), 2500);
-                  }} style={{ flex: 1, padding: '9px 12px', borderRadius: '20px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', background: '#FFFFFF' }} />
-                  <button type="submit" style={{ background: '#075E54', color: '#FFFFFF', border: 'none', width: '34px', height: '34px', borderRadius: '50%', cursor: 'pointer' }}>➤</button>
-                </form>
-              </>
-            )}
+          <div>
+            <ChatRoom
+              currentUser={currentUser}
+              userProfile={userProfile}
+              recipientUser={privateChatRecipient}
+              onBack={() => setPrivateChatRecipient(null)}
+              onOpenAuth={() => setShowAuthModal(true)}
+            />
           </div>
         )}
 
@@ -1825,19 +1698,19 @@ export default function App() {
         zIndex: 1000,
         boxShadow: '0 -3px 12px rgba(0,0,0,0.05)'
       }}>
-        <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'home' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'home' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>🏠</span><span>হোম</span>
         </button>
-        <button onClick={() => setActiveTab('memories')} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'memories' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('memories'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'memories' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>📸</span><span>স্মৃতি</span>
         </button>
-        <button onClick={() => setActiveTab('pride')} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'pride' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('pride'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'pride' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>🏆</span><span>গৌরব</span>
         </button>
-        <button onClick={() => setActiveTab('directory')} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'directory' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('directory'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'directory' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>👥</span><span>সহপাঠী</span>
         </button>
-        <button onClick={() => setActiveTab('school')} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('school'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span>
         </button>
         <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -1855,7 +1728,6 @@ export default function App() {
             </div>
 
             <div>
-              {/* নোটিফিকেশন ব্রডকাস্ট */}
               <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
                 <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
@@ -1865,7 +1737,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* হেডার ছবি পরিবর্তন */}
               <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
                 <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
@@ -1874,7 +1745,6 @@ export default function App() {
                 </button>
               </div>
 
-              {/* APK ডাউনলোড লিংক ও নোটিশ */}
               <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
                 <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
                 <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
