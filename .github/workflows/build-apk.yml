@@ -1,4 +1,4 @@
-name: Build Android App (Direct APK Download)
+name: Build Android App (Direct APK & Seamless Update)
 
 on:
   push:
@@ -38,8 +38,12 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      - name: Inject Android Microphone Permissions
+      - name: Setup Permanent Signing Key and Increment Version
         run: |
+          # ১. অটোমেটিক ভার্সন বৃদ্ধি যাতে অ্যান্ড্রয়েড আপডেট চেনে
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
+
+          # ২. মাইক্রোফোন ও সিস্টেম পারমিশন নিশ্চিত করা
           sed -i '/<\/manifest>/i \
               <uses-permission android:name="android.permission.RECORD_AUDIO" />\
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
@@ -49,7 +53,17 @@ jobs:
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />' android/app/src/main/AndroidManifest.xml || true
 
-          keytool -genkeypair -v -storetype PKCS12 -keystore android/app/sandikona_release.keystore -storepass Sandikona2027Pass -alias sandikona_key -keypass Sandikona2027Pass -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart Rasel Khan, OU=Reunion2027, O=Sandikona School, L=Kendua, ST=Netrokona, C=BD" || true
+          # ৩. স্থায়ী ডিজিটাল কি তৈরি ও সংরক্ষণ (যাতে প্রতিবার একই সিগনেচার থাকে)
+          mkdir -p ~/.android
+          if [ ! -f android/app/permanent_debug.keystore ]; then
+            keytool -genkeypair -v -storetype PKCS12 -keystore android/app/permanent_debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sandikona2014,OU=Reunion,O=Sandikona,L=Kendua,C=BD"
+            git config user.name "github-actions"
+            git config user.email "github-actions@github.com"
+            git add android/app/permanent_debug.keystore
+            git commit -m "chore: save permanent keystore for seamless updates" || true
+            git push origin main || true
+          fi
+          cp android/app/permanent_debug.keystore ~/.android/debug.keystore
 
       - name: Build APK
         working-directory: android
@@ -61,5 +75,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          RELEASE_TAG="v1.0.$(date +%s)"
-          gh release create "$RELEASE_TAG" "android/app/build/outputs/apk/debug/app-debug.apk#Reunion-2027.apk" --title "Reunion 2027 Official App" --notes "সরাসরি ইনস্টলযোগ্য APK ফাইল (কোনো জিপ ছাড়াই)"
+          RELEASE_TAG="v1.0.${{ github.run_number }}"
+          gh release create "$RELEASE_TAG" "android/app/build/outputs/apk/debug/app-debug.apk#Reunion-2027.apk" --title "Reunion 2027 Update #${{ github.run_number }}" --notes "সরাসরি আপডেটযোগ্য অফিশিয়াল APK"
