@@ -28,6 +28,7 @@ import {
   ActiveCall 
 } from "./types";
 import ChatRoom from "./components/ChatRoom";
+import VoiceRoom from "./components/VoiceRoom";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
@@ -48,10 +49,11 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // ১-অন-১ ব্যক্তিগত চ্যাটের টার্গেট ইউজার
+  // ১-অন-১ চ্যাট ও লাইভ ভয়েস রুম স্টেট
   const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
+  const [showLiveVoiceRoom, setShowLiveVoiceRoom] = useState(false);
 
-  // সোশ্যাল টাইমলাইন পোস্ট স্টেটস
+  // সোশ্যাল টাইমলাইন পোস্ট
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
   const [newPostFile, setNewPostFile] = useState<File | null>(null);
@@ -61,7 +63,7 @@ export default function App() {
   const [commentInput, setCommentInput] = useState('');
   const postFileInputRef = useRef<HTMLInputElement>(null);
 
-  // অন্যান্য ডেটাবেস স্টেটস
+  // ডেটাবেস স্টেটস
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
@@ -86,7 +88,7 @@ export default function App() {
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
   const isInitialMembers = useRef(false);
 
-  // কলিং
+  // ১-অন-১ অডিও কল
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
   const [currentCallSession, setCurrentCallSession] = useState<ActiveCall | null>(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -103,7 +105,7 @@ export default function App() {
   const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
   const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
 
-  // মেমোরি আপলোড
+  // স্মৃতি আপলোড
   const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
   const [memCaption, setMemCaption] = useState('');
   const [selectedMemFile, setSelectedMemFile] = useState<File | null>(null);
@@ -130,7 +132,7 @@ export default function App() {
   const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
-  // ফ্রি ইমেজ অপ্টিমাইজার (Canvas)
+  // ফ্রি ইমেজ অপ্টিমাইজার
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -162,7 +164,7 @@ export default function App() {
     });
   };
 
-  // Firebase Auth লিসেনার
+  // Auth লিসেনার
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -172,9 +174,7 @@ export default function App() {
           if (userDoc.exists()) {
             setUserProfile(userDoc.data() as UserProfile);
           }
-        } catch (e) {
-          console.error("Profile load error:", e);
-        }
+        } catch (e) {}
       } else {
         setUserProfile(null);
       }
@@ -194,7 +194,7 @@ export default function App() {
 
     const clean = authPhone.replace(/[^\d]/g, '');
     if (clean.length < 11) {
-      setAuthError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন (যেমন: 017XXXXXXXX)');
+      setAuthError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন।');
       setAuthSubmitting(false);
       return;
     }
@@ -229,11 +229,7 @@ export default function App() {
       setAuthName('');
       triggerNativeNotification("স্বাগতম!", "অভিনন্দন " + newProfile.name + ", আপনার অ্যাকাউন্ট তৈরি হয়েছে।");
     } catch (err: any) {
-      if (err.code === 'auth/email-already-in-use') {
-        setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট তৈরি করা আছে। দয়া করে লগইন করুন।');
-      } else {
-        setAuthError(err.message || 'অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
-      }
+      setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
     } finally {
       setAuthSubmitting(false);
     }
@@ -349,7 +345,7 @@ export default function App() {
     setTimeout(() => setActiveToast(null), 6000);
   };
 
-  // অডিও কলিং
+  // ১-অন-১ অডিও কলিং
   const startRingtone = () => {
     try {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -403,35 +399,6 @@ export default function App() {
 
     return () => unsubCalls();
   }, [userProfile]);
-
-  const initiateCallToAll = async () => {
-    if (!currentUser || !userProfile) {
-      alert('কল করার জন্য প্রথমে লগইন করুন।');
-      setShowAuthModal(true);
-      return;
-    }
-
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      const callRef = await addDoc(collection(db, "active_calls"), {
-        caller: userProfile.name,
-        status: 'ringing',
-        timestamp: Date.now()
-      });
-
-      setCurrentCallSession({
-        id: callRef.id,
-        caller: userProfile.name,
-        status: 'ringing',
-        timestamp: Date.now()
-      });
-      setCallDuration(0);
-      if (callTimerRef.current) clearInterval(callTimerRef.current);
-      callTimerRef.current = setInterval(() => setCallDuration(p => p + 1), 1000);
-    } catch (e) {
-      alert('কল করতে মাইক্রোফোন পারমিশন এলাও করুন।');
-    }
-  };
 
   const acceptIncomingCall = async () => {
     stopRingtone();
@@ -511,7 +478,7 @@ export default function App() {
     }
   }, [memories.length]);
 
-  // ডেটাবেস লিসেনার
+  // ফায়ারবেস ডেটা লিসেনার
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
@@ -652,9 +619,7 @@ export default function App() {
 
     try {
       await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
-    } catch (e) {
-      console.error(e);
-    }
+    } catch (e) {}
   };
 
   const handleAddComment = async (e: React.FormEvent, postId: string) => {
@@ -826,7 +791,6 @@ export default function App() {
     }
   };
 
-  // ১-অন-১ চ্যাট ওপেন করার হ্যান্ডলার
   const startPrivateChat = (member: UserProfile) => {
     if (!currentUser) {
       alert('মেসেজ পাঠাতে প্রথমে লগইন করুন।');
@@ -886,6 +850,15 @@ export default function App() {
           </div>
           <button onClick={() => setActiveToast(null)} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>✕</button>
         </div>
+      )}
+
+      {/* ইন-অ্যাপ ভয়েস রুম ওভারলে (গ্রুপ অডিও কনফারেন্স) */}
+      {showLiveVoiceRoom && (
+        <VoiceRoom
+          currentUser={currentUser}
+          userProfile={userProfile}
+          onClose={() => setShowLiveVoiceRoom(false)}
+        />
       )}
 
       {/* ইনকামিং অডিও কল স্ক্রিন */}
@@ -1128,9 +1101,60 @@ export default function App() {
       {/* মূল পেজসমূহ */}
       <main style={{ maxWidth: '500px', margin: '0 auto', padding: '12px' }}>
 
-        {/* হোম টাইমলাইন পোস্ট */}
+        {/* হোম টাইমলাইন পোস্ট ও লাইভ ভয়েস রুম কার্ড */}
         {activeTab === 'home' && (
           <div>
+            {/* ৫নং ধাপ: লাইভ ভয়েস আড্ডা রুমের বড় কার্ড */}
+            <div style={{
+              background: 'linear-gradient(135deg, #06321D 0%, #0A4D2E 100%)',
+              color: '#FFFFFF',
+              borderRadius: '16px',
+              padding: '14px',
+              marginBottom: '14px',
+              border: '1.5px solid #10B981',
+              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.25)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <span style={{ fontSize: '10px', color: '#10B981', fontWeight: '800', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 8px', borderRadius: '10px' }}>
+                  ● লাইভ ভয়েস কনফারেন্স
+                </span>
+                <h3 style={{ margin: '4px 0 2px 0', fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>
+                  🎙️ এসএসসি ২০১৪ ভয়েস রুম
+                </h3>
+                <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0' }}>
+                  সবাই একসাথে লাইভ কথা বলুন ও মিটিং করুন
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (!currentUser) {
+                    alert('ভয়েস রুমে যুক্ত হতে প্রথমে লগইন করুন।');
+                    setShowAuthModal(true);
+                    return;
+                  }
+                  setShowLiveVoiceRoom(true);
+                }}
+                style={{
+                  background: '#10B981',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '12px',
+                  fontSize: '12px',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+              >
+                রুমে ঢুকুন 🎧
+              </button>
+            </div>
+
+            {/* নতুন পোস্ট তৈরির বক্স */}
             <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '18px' }}>✍️</span>
@@ -1462,14 +1486,13 @@ export default function App() {
                 {filteredMembers.map((m) => (
                   <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
+                      <h4 style={{ margin: 0, fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
                       <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
                       <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
                     </div>
 
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '4px 6px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
-                      {/* ১-অন-১ পার্সোনাল চ্যাট বাটন */}
                       <button
                         onClick={() => startPrivateChat(m)}
                         style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
