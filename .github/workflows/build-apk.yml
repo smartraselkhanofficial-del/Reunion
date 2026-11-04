@@ -1,9 +1,12 @@
-name: Build Android App (Release & Update Ready)
+name: Build Android App (Direct APK Download)
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -35,9 +38,17 @@ jobs:
           npx cap add android || true
           npx cap sync android
 
-      - name: Configure Permanent Release Key & Permissions
+      - name: Inject Android Microphone Permissions
         run: |
-          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
+          sed -i '/<\/manifest>/i \
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />\
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
+              <uses-permission android:name="android.permission.CAMERA" />\
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />' android/app/src/main/AndroidManifest.xml || true
+
           keytool -genkeypair -v -storetype PKCS12 -keystore android/app/sandikona_release.keystore -storepass Sandikona2027Pass -alias sandikona_key -keypass Sandikona2027Pass -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Smart Rasel Khan, OU=Reunion2027, O=Sandikona School, L=Kendua, ST=Netrokona, C=BD" || true
 
       - name: Build APK
@@ -46,8 +57,9 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Reunion-2027-Official-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish Direct APK File (No Zip)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG="v1.0.$(date +%s)"
+          gh release create "$RELEASE_TAG" "android/app/build/outputs/apk/debug/app-debug.apk#Reunion-2027.apk" --title "Reunion 2027 Official App" --notes "সরাসরি ইনস্টলযোগ্য APK ফাইল (কোনো জিপ ছাড়াই)"
