@@ -13,15 +13,23 @@ export interface UserProfile {
   createdAt: number;
 }
 
+export interface FriendRequest {
+  id: string; 
+  senderUid: string;
+  senderName: string;
+  receiverUid: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  timestamp: number;
+}
+
 export interface PostItem {
   id: string;
   authorUid: string;
   authorName: string;
   authorVillage: string;
-  authorAvatar?: string;
   content: string;
   mediaUrl?: string;
-  likes: string[]; // UIDs
+  likes: string[];
   commentsCount: number;
   timestamp: number;
   dateStr: string;
@@ -35,21 +43,12 @@ export interface PostComment {
   timestamp: number;
 }
 
-export interface StoryItem {
+export interface MemoryItem {
   id: string;
-  authorUid: string;
-  authorName: string;
+  uploader: string;
+  caption: string;
   mediaUrl: string;
-  timestamp: number;
-  expiresAt: number;
-}
-
-export interface FriendRequest {
-  id: string;
-  senderUid: string;
-  senderName: string;
-  receiverUid: string;
-  status: 'pending' | 'accepted' | 'rejected';
+  mediaType: 'image' | 'video';
   timestamp: number;
 }
 
@@ -78,13 +77,8 @@ export interface ChatMsg {
   senderUid?: string;
   text?: string;
   fileUrl?: string;
+  fileType?: string;
+  fileName?: string;
   timestamp: number;
   time: string;
-}
-
-export interface ActiveCall {
-  id: string;
-  caller: string;
-  status: 'ringing' | 'connected' | 'ended';
-  timestamp: number;
 }
