@@ -28,8 +28,7 @@ import {
   ActiveCall 
 } from "./types";
 import ChatRoom from "./components/ChatRoom";
-import VoiceRoom from "./components/VoiceRoom";
-import NotificationCenter from "./components/NotificationCenter";
+import ReunionPoll from "./components/ReunionPoll";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
@@ -50,12 +49,10 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // ১-অন-১ চ্যাট, ভয়েস রুম ও নোটিফিকেশন হাব
+  // ১-অন-১ চ্যাট
   const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
-  const [showLiveVoiceRoom, setShowLiveVoiceRoom] = useState(false);
-  const [showNotificationHub, setShowNotificationHub] = useState(false);
 
-  // সোশ্যাল টাইমলাইন পোস্ট
+  // সোশ্যাল টাইমলাইন
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
   const [newPostFile, setNewPostFile] = useState<File | null>(null);
@@ -65,7 +62,7 @@ export default function App() {
   const [commentInput, setCommentInput] = useState('');
   const postFileInputRef = useRef<HTMLInputElement>(null);
 
-  // ডেটাবেস স্টেটস
+  // অন্যান্য ডেটাবেস স্টেটস
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
@@ -88,32 +85,30 @@ export default function App() {
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
-  const isInitialMembers = useRef(false);
 
-  // ১-অন-১ অডিও কল
-  const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
-  const [currentCallSession, setCurrentCallSession] = useState<ActiveCall | null>(null);
-  const [callDuration, setCallDuration] = useState(0);
-  const [isMicMuted, setIsMicMuted] = useState(false);
-  const callTimerRef = useRef<any>(null);
-  const ringtoneOscRef = useRef<any>(null);
-
-  // অ্যাডমিন প্যানেল
+  // অ্যাডমিন
   const [showAdmin, setShowAdmin] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [clickCount, setClickCount] = useState(0);
+  const ADMIN_PIN = '74798';
+
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newHistoryInput, setNewHistoryInput] = useState('');
   const [newApkUrlInput, setNewApkUrlInput] = useState('');
   const [adminBroadcastTitle, setAdminBroadcastTitle] = useState('');
   const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
-  const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
+  
+  // অ্যাডমিন জরিপ (Poll) কন্ট্রোল
+  const [pollQuestionInput, setPollQuestionInput] = useState('');
+  const [pollOptionsInput, setPollOptionsInput] = useState('');
 
-  // স্মৃতি আপলোড
+  // মডাল স্টেটস
   const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
   const [memCaption, setMemCaption] = useState('');
   const [selectedMemFile, setSelectedMemFile] = useState<File | null>(null);
   const [memUploadProgress, setMemUploadProgress] = useState<string | null>(null);
 
-  // গৌরব ও শিক্ষক মডাল
   const [showAddPrideModal, setShowAddPrideModal] = useState(false);
   const [prideName, setPrideName] = useState('');
   const [prideProfession, setPrideProfession] = useState('');
@@ -134,7 +129,7 @@ export default function App() {
   const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
-  // ইমেজ কম্প্রেশন
+  // ফ্রি ইমেজ অপ্টিমাইজার (Canvas)
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -166,7 +161,7 @@ export default function App() {
     });
   };
 
-  // Auth লিসেনার
+  // Firebase Auth লিসেনার
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -200,11 +195,6 @@ export default function App() {
       setAuthSubmitting(false);
       return;
     }
-    if (authPassword.length < 6) {
-      setAuthError('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
-      setAuthSubmitting(false);
-      return;
-    }
 
     try {
       const email = phoneToEmail(clean);
@@ -231,11 +221,7 @@ export default function App() {
       setAuthName('');
       triggerNativeNotification("স্বাগতম!", "অভিনন্দন " + newProfile.name + ", আপনার অ্যাকাউন্ট তৈরি হয়েছে।");
     } catch (err: any) {
-      if (err.code === 'auth/email-already-in-use') {
-        setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট আছে। লগইন করুন।');
-      } else {
-        setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
-      }
+      setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
     } finally {
       setAuthSubmitting(false);
     }
@@ -247,21 +233,14 @@ export default function App() {
     setAuthSubmitting(true);
 
     const clean = authPhone.replace(/[^\d]/g, '');
-    if (clean.length < 11) {
-      setAuthError('সঠিক ১১ ডিজিটের মোবাইল নম্বর দিন।');
-      setAuthSubmitting(false);
-      return;
-    }
-
     try {
       const email = phoneToEmail(clean);
       const userCredential = await signInWithEmailAndPassword(auth, email, authPassword);
       const user = userCredential.user;
 
       const userDoc = await getDoc(doc(db, "users", user.uid));
-      if (userDoc.exists()) {
-        setUserProfile(userDoc.data() as UserProfile);
-      }
+      if (userDoc.exists()) setUserProfile(userDoc.data() as UserProfile);
+      
       setShowAuthModal(false);
       setAuthPhone('');
       setAuthPassword('');
@@ -285,14 +264,26 @@ export default function App() {
       const swCode = "self.addEventListener('install', e => self.skipWaiting()); self.addEventListener('activate', e => e.waitUntil(clients.claim())); self.addEventListener('notificationclick', e => { e.notification.close(); e.waitUntil(clients.matchAll({ type: 'window' }).then(clientList => { if (clientList.length > 0) return clientList[0].focus(); return clients.openWindow('/'); })); });";
       const blob = new Blob([swCode], { type: 'application/javascript' });
       navigator.serviceWorker.register(URL.createObjectURL(blob))
-        .then(reg => { swReg.current = reg; })
-        .catch(() => {});
+        .then(reg => { swReg.current = reg; }).catch(() => {});
     }
-
-    if ("Notification" in window) {
-      setNotifPermission(Notification.permission);
-    }
+    if ("Notification" in window) setNotifPermission(Notification.permission);
   }, []);
+
+  const requestAllAppPermissions = async () => {
+    if ("Notification" in window) {
+      try {
+        const perm = await Notification.requestPermission();
+        setNotifPermission(perm);
+        if (perm === 'granted') triggerNativeNotification("পুনর্মিলনী ২০২৭", "সব নোটিফিকেশন এখন আপনার মোবাইলের নোটিফিকেশন বারে পৌঁছাবে।");
+      } catch (e) {}
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(t => t.stop());
+      } catch (e) {}
+    }
+  };
 
   const playChimeSound = () => {
     try {
@@ -331,98 +322,6 @@ export default function App() {
 
     setActiveToast({ title, body, icon });
     setTimeout(() => setActiveToast(null), 6000);
-  };
-
-  // ১-অন-১ অডিও কলিং
-  const startRingtone = () => {
-    try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      ringtoneOscRef.current = { ctx, osc };
-    } catch (e) {}
-  };
-
-  const stopRingtone = () => {
-    if (ringtoneOscRef.current) {
-      try {
-        ringtoneOscRef.current.osc.stop();
-        ringtoneOscRef.current.ctx.close();
-      } catch (e) {}
-      ringtoneOscRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    const unsubCalls = onSnapshot(collection(db, "active_calls"), (snap) => {
-      snap.docChanges().forEach((change) => {
-        const callData = { id: change.doc.id, ...change.doc.data() } as ActiveCall;
-        const myName = userProfile?.name || 'সহপাঠী';
-
-        if (change.type === "added" && callData.status === "ringing" && callData.caller !== myName) {
-          setIncomingCall(callData);
-          startRingtone();
-          triggerNativeNotification("📞 ইনকামিং অডিও কল", callData.caller + " আপনাকে কল দিচ্ছেন...");
-        }
-
-        if (change.type === "modified" || change.type === "removed") {
-          if (callData.status === "ended") {
-            stopRingtone();
-            setIncomingCall(null);
-            setCurrentCallSession(null);
-            if (callTimerRef.current) clearInterval(callTimerRef.current);
-            setCallDuration(0);
-          }
-        }
-      });
-    });
-
-    return () => unsubCalls();
-  }, [userProfile]);
-
-  const acceptIncomingCall = async () => {
-    stopRingtone();
-    if (!incomingCall) return;
-
-    try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      await setDoc(doc(db, "active_calls", incomingCall.id), { status: 'connected' }, { merge: true });
-      setCurrentCallSession(incomingCall);
-      setIncomingCall(null);
-      setCallDuration(0);
-      if (callTimerRef.current) clearInterval(callTimerRef.current);
-      callTimerRef.current = setInterval(() => setCallDuration(p => p + 1), 1000);
-    } catch (e) {
-      alert('মাইক্রোফোন পারমিশন দিন।');
-    }
-  };
-
-  const rejectOrEndCall = async () => {
-    stopRingtone();
-    if (incomingCall) {
-      await setDoc(doc(db, "active_calls", incomingCall.id), { status: 'ended' }, { merge: true });
-      setIncomingCall(null);
-    }
-    if (currentCallSession) {
-      await setDoc(doc(db, "active_calls", currentCallSession.id), { status: 'ended' }, { merge: true });
-      setCurrentCallSession(null);
-    }
-    if (callTimerRef.current) clearInterval(callTimerRef.current);
-    setCallDuration(0);
-  };
-
-  const formatTimer = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
-    return m + ":" + s;
   };
 
   // লাইভ সময় ও কাউন্টার
@@ -466,25 +365,14 @@ export default function App() {
     }
   }, [memories.length]);
 
-  // ডেটাবেস লিসেনার
+  // ফায়ারবেস ডেটা লিসেনার
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
       setAllUsers(list);
       setIsLoading(false);
-
-      if (isInitialMembers.current) {
-        snap.docChanges().forEach((c) => {
-          if (c.type === "added") {
-            const m = c.doc.data() as UserProfile;
-            triggerNativeNotification("🎉 নতুন সহপাঠী যুক্ত হয়েছেন!", m.name + " (" + (m.village || m.area) + ") পুনর্মিলনীতে যোগ দিয়েছেন।", "🎓");
-          }
-        });
-      } else {
-        isInitialMembers.current = true;
-      }
-    }, () => setIsLoading(false));
+    });
 
     const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"));
     const unsubPosts = onSnapshot(qPosts, (snap) => {
@@ -512,6 +400,15 @@ export default function App() {
       setTeachers(list);
     });
 
+    const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
+    const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
+      snap.docChanges().forEach((c) => {
+        if (c.type === "added" && Date.now() - c.doc.data().timestamp < 5000) {
+          triggerNativeNotification(c.doc.data().title || "📢 অ্যাডমিন বার্তা", c.doc.data().body || "", "📢");
+        }
+      });
+    });
+
     const unsubSettings = onSnapshot(doc(db, "settings", "app_config"), (d) => {
       if (d.exists()) {
         const data = d.data();
@@ -528,31 +425,26 @@ export default function App() {
       unsubMemories();
       unsubPride();
       unsubTeachers();
+      unsubAdminBroadcast();
       unsubSettings();
     };
-  }, [currentUser]);
+  }, []);
 
   useEffect(() => {
     if (!activeCommentsPostId) {
       setCommentsList([]);
       return;
     }
-
-    const qComments = query(
-      collection(db, "posts", activeCommentsPostId, "comments"),
-      orderBy("timestamp", "asc")
-    );
-
+    const qComments = query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc"));
     const unsubComments = onSnapshot(qComments, (snap) => {
       const list: PostComment[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostComment));
       setCommentsList(list);
     });
-
     return () => unsubComments();
   }, [activeCommentsPostId]);
 
-  // পোস্ট তৈরি ও লাইক
+  // পোস্ট হ্যান্ডলার
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -565,9 +457,7 @@ export default function App() {
     setIsPosting(true);
     try {
       let finalMediaUrl = '';
-      if (newPostFile) {
-        finalMediaUrl = await compressImage(newPostFile);
-      }
+      if (newPostFile) finalMediaUrl = await compressImage(newPostFile);
 
       await addDoc(collection(db, "posts"), {
         authorUid: currentUser.uid,
@@ -584,9 +474,9 @@ export default function App() {
       setNewPostText('');
       setNewPostFile(null);
       if (postFileInputRef.current) postFileInputRef.current.value = '';
-      alert('পোস্ট টাইমলাইনে প্রকাশিত হয়েছে!');
+      alert('আপনার পোস্টটি টাইমলাইনে সফলভাবে প্রকাশিত হয়েছে!');
     } catch (err) {
-      alert('পোস্ট করতে সমস্যা হয়েছে।');
+      alert('পোস্ট প্রকাশ করতে সমস্যা হয়েছে।');
     } finally {
       setIsPosting(false);
     }
@@ -598,12 +488,9 @@ export default function App() {
       setShowAuthModal(true);
       return;
     }
-
     const currentLikes = post.likes || [];
     const isLiked = currentLikes.includes(currentUser.uid);
-    const updatedLikes = isLiked 
-      ? currentLikes.filter(uid => uid !== currentUser.uid)
-      : [...currentLikes, currentUser.uid];
+    const updatedLikes = isLiked ? currentLikes.filter(uid => uid !== currentUser.uid) : [...currentLikes, currentUser.uid];
 
     try {
       await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
@@ -626,12 +513,10 @@ export default function App() {
         text: commentInput.trim(),
         timestamp: Date.now()
       });
-
       const targetPost = posts.find(p => p.id === postId);
       if (targetPost) {
         await setDoc(doc(db, "posts", postId), { commentsCount: (targetPost.commentsCount || 0) + 1 }, { merge: true });
       }
-
       setCommentInput('');
     } catch (e) {
       alert('মন্তব্য পোস্ট করা যায়নি।');
@@ -645,12 +530,9 @@ export default function App() {
       alert('শুধুমাত্র পোস্টদাতা বা অ্যাডমিন এই পোস্ট ডিলিট করতে পারবেন।');
       return;
     }
-
     if (!window.confirm("আপনি কি নিশ্চিতভাবে এই পোস্টটি টাইমলাইন থেকে মুছে ফেলতে চান?")) return;
-
     try {
       await deleteDoc(doc(db, "posts", postId));
-      alert('পোস্টটি মুছে ফেলা হয়েছে।');
     } catch (err) {
       alert('ডিলিট করা যায়নি।');
     }
@@ -670,7 +552,6 @@ export default function App() {
       const finalMediaUrl = await compressImage(selectedMemFile);
       await addDoc(collection(db, "memories"), {
         uploader: userProfile.name,
-        uploaderUid: currentUser.uid,
         caption: memCaption.trim() || 'স্কুল জীবনের স্মৃতি',
         mediaUrl: finalMediaUrl,
         mediaType: 'image',
@@ -779,20 +660,6 @@ export default function App() {
     }
   };
 
-  const startPrivateChat = (member: UserProfile) => {
-    if (!currentUser) {
-      alert('মেসেজ পাঠাতে প্রথমে লগইন করুন।');
-      setShowAuthModal(true);
-      return;
-    }
-    if (member.uid === currentUser.uid) {
-      alert('আপনি নিজের সাথে চ্যাট করতে পারবেন না!');
-      return;
-    }
-    setPrivateChatRecipient(member);
-    setActiveTab('chat');
-  };
-
   const filteredMembers = allUsers.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.area.toLowerCase().includes(searchQuery.toLowerCase()) || m.village.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
@@ -840,118 +707,11 @@ export default function App() {
         </div>
       )}
 
-      {/* নোটিফিকেশন হাব ড্রয়ার */}
-      <NotificationCenter
-        isOpen={showNotificationHub}
-        onClose={() => setShowNotificationHub(false)}
-        onItemClick={() => {}}
-      />
-
-      {/* ইন-অ্যাপ লাইভ ভয়েস রুম ওভারলে */}
-      {showLiveVoiceRoom && (
-        <VoiceRoom
-          currentUser={currentUser}
-          userProfile={userProfile}
-          onClose={() => setShowLiveVoiceRoom(false)}
-        />
-      )}
-
-      {/* ইনকামিং অডিও কল স্ক্রিন */}
-      {incomingCall && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.96)',
-          zIndex: 1000000,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '50px 20px',
-          color: '#FFFFFF'
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <span style={{ fontSize: '12px', color: '#38BDF8', background: 'rgba(56, 189, 248, 0.2)', padding: '4px 14px', borderRadius: '20px', fontWeight: '800' }}>
-              📞 ইনকামিং অডিও কল
-            </span>
-            <h2 style={{ fontSize: '26px', margin: '16px 0 4px 0', fontWeight: '900' }}>
-              {incomingCall.caller}
-            </h2>
-            <p style={{ margin: 0, fontSize: '13px', color: '#94A3B8' }}>আপনাকে সরাসরি অডিও কল দিচ্ছেন...</p>
-          </div>
-
-          <div style={{
-            width: '120px',
-            height: '120px',
-            borderRadius: '50%',
-            backgroundColor: '#1E293B',
-            border: '4px solid #10B981',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '48px',
-            boxShadow: '0 0 40px rgba(16, 185, 129, 0.5)'
-          }}>
-            👤
-          </div>
-
-          <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
-            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
-            <button onClick={acceptIncomingCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
-          </div>
-        </div>
-      )}
-
-      {/* রানিং অডিও কল স্ক্রিন */}
-      {currentCallSession && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: '#0F172A',
-          zIndex: 1000000,
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '40px 20px',
-          color: '#FFFFFF'
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <span style={{ fontSize: '11px', color: '#10B981', background: 'rgba(16, 185, 129, 0.2)', padding: '4px 12px', borderRadius: '20px', fontWeight: '800' }}>● সংযুক্ত অডিও কল</span>
-            <h3 style={{ fontSize: '22px', margin: '12px 0 2px 0', fontWeight: '900' }}>
-              {currentCallSession.caller === userProfile?.name ? 'আপনার ডায়াল করা কল' : currentCallSession.caller}
-            </h3>
-            <span style={{ fontSize: '14px', color: '#38BDF8', fontFamily: 'monospace' }}>{formatTimer(callDuration)}</span>
-          </div>
-
-          <div style={{
-            width: '120px',
-            height: '120px',
-            borderRadius: '50%',
-            backgroundColor: '#1E293B',
-            border: isMicMuted ? '4px solid #EF4444' : '4px solid #10B981',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '48px'
-          }}>
-            {isMicMuted ? '🔇' : '🎙️'}
-          </div>
-
-          <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
-            <button onClick={() => setIsMicMuted(!isMicMuted)} style={{ width: '54px', height: '54px', borderRadius: '50%', backgroundColor: isMicMuted ? '#EF4444' : '#334155', color: '#FFFFFF', border: 'none', fontSize: '20px', cursor: 'pointer' }}>
-              {isMicMuted ? '🔇' : '🎙️'}
-            </button>
-            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
-          </div>
-        </div>
-      )}
-
-      {/* অথেনটিকেশন ও নোটিফিকেশন বার */}
+      {/* অথেনটিকেশন স্ট্যাটাস বার */}
       <div style={{
         background: '#062B1A',
         color: '#E2E8F0',
-        padding: '6px 12px',
+        padding: '5px 12px',
         fontSize: '11px',
         display: 'flex',
         justifyContent: 'space-between',
@@ -971,29 +731,20 @@ export default function App() {
           <span style={{ color: '#FCD34D' }}>⚠️ অ্যাকাউন্টে লগইন করা নেই</span>
         )}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* নোটিফিকেশন বেল আইকন */}
-          <button
-            onClick={() => setShowNotificationHub(true)}
-            style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '15px', cursor: 'pointer', padding: '2px 4px' }}
-            title="নোটিফিকেশন দেখুন"
-          >
-            🔔
-          </button>
-
+        <div>
           {currentUser ? (
             <button onClick={handleLogout} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
               লগআউট
             </button>
           ) : (
             <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '2px 10px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}>
-              লগইন
+              লগইন / সাইন আপ
             </button>
           )}
         </div>
       </div>
 
-      {/* হোম ব্যানার */}
+      {/* বড় ব্যানার শুধু HOME ট্যাবে থাকবে */}
       {activeTab === 'home' ? (
         <>
           <div style={{
@@ -1105,57 +856,15 @@ export default function App() {
       {/* মূল পেজসমূহ */}
       <main style={{ maxWidth: '500px', margin: '0 auto', padding: '12px' }}>
 
+        {/* হোম টাইমলাইন পোস্ট */}
         {activeTab === 'home' && (
           <div>
-            {/* লাইভ ভয়েস রুম কার্ড */}
-            <div style={{
-              background: 'linear-gradient(135deg, #06321D 0%, #0A4D2E 100%)',
-              color: '#FFFFFF',
-              borderRadius: '16px',
-              padding: '14px',
-              marginBottom: '14px',
-              border: '1.5px solid #10B981',
-              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.25)',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}>
-              <div>
-                <span style={{ fontSize: '10px', color: '#10B981', fontWeight: '800', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 8px', borderRadius: '10px' }}>
-                  ● লাইভ ভয়েস কনফারেন্স
-                </span>
-                <h3 style={{ margin: '4px 0 2px 0', fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>
-                  🎙️ এসএসসি ২০১৪ ভয়েস রুম
-                </h3>
-                <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0' }}>
-                  সবাই একসাথে লাইভ কথা বলুন ও মিটিং করুন
-                </p>
-              </div>
-
-              <button
-                onClick={() => {
-                  if (!currentUser) {
-                    alert('ভয়েস রুমে যুক্ত হতে প্রথমে লগইন করুন।');
-                    setShowAuthModal(true);
-                    return;
-                  }
-                  setShowLiveVoiceRoom(true);
-                }}
-                style={{
-                  background: '#10B981',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  padding: '10px 16px',
-                  borderRadius: '12px',
-                  fontSize: '12px',
-                  fontWeight: '800',
-                  cursor: 'pointer',
-                  flexShrink: 0
-                }}
-              >
-                রুমে ঢুকুন 🎧
-              </button>
-            </div>
+            {/* ৭নং ধাপ: লাইভ পুনর্মিলনী জরিপ (Reunion Poll) */}
+            <ReunionPoll
+              currentUser={currentUser}
+              userProfile={userProfile}
+              onOpenAuth={() => setShowAuthModal(true)}
+            />
 
             {/* নতুন পোস্ট তৈরির বক্স */}
             <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
@@ -1212,7 +921,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* ফেসবুকের মতো পোস্ট ফিড */}
+            {/* ফেসবুকের মতো লাইভ টাইমলাইন পোস্টের তালিকা */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
               {posts.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B', fontSize: '12px' }}>
@@ -1420,14 +1129,6 @@ export default function App() {
                     </div>
 
                     <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>{p.details}</p>
-
-                    {p.phone && (
-                      <div style={{ marginTop: '8px', borderTop: '1px solid #F1F5F9', paddingTop: '6px', display: 'flex', justifyContent: 'flex-end' }}>
-                        <a href={"tel:" + p.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700' }}>
-                          📞 যোগাযোগ করুন
-                        </a>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -1461,9 +1162,6 @@ export default function App() {
                       <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{t.name}</h5>
                       <span style={{ fontSize: '11px', color: '#137547' }}>{t.designation} • বিষয়: {t.subject}</span>
                     </div>
-                    {t.phone && (
-                      <a href={"tel:" + t.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700' }}>📞 কল</a>
-                    )}
                   </div>
                 ))}
               </div>
@@ -1489,7 +1187,7 @@ export default function App() {
                 {filteredMembers.map((m) => (
                   <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <h4 style={{ margin: 0, fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
+                      <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
                       <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
                       <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
                     </div>
@@ -1497,7 +1195,10 @@ export default function App() {
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '4px 6px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
                       <button
-                        onClick={() => startPrivateChat(m)}
+                        onClick={() => {
+                          setPrivateChatRecipient(m);
+                          setActiveTab('chat');
+                        }}
                         style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
                       >
                         💬 ইনবক্স
@@ -1739,12 +1440,12 @@ export default function App() {
         <button onClick={() => { setActiveTab('school'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span>
         </button>
-        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <button onClick={() => { setActiveTab('chat'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '15px' }}>💬</span><span>আড্ডা</span>
         </button>
       </nav>
 
-      {/* অ্যাডমিন কন্ট্রোল প্যানেল (মডারেশন ও ফুল কন্ট্রোল) */}
+      {/* অ্যাডমিন কন্ট্রোল প্যানেল */}
       {showAdmin && userProfile?.role === 'super_admin' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
@@ -1756,11 +1457,32 @@ export default function App() {
             <div>
               {/* নোটিফিকেশন ব্রডকাস্ট */}
               <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনে নোটিফিকেশন পাঠান:</h4>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনের নোটিফিকেশন বারে মেসেজ পাঠান:</h4>
                 <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
                 <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
                 <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
                   {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
+                </button>
+              </div>
+
+              {/* পোল কন্ট্রোল */}
+              <div style={{ background: '#F0FDF4', border: '1.2px solid #86EFAC', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#166534', fontWeight: '800' }}>📊 লাইভ পোল (জরিপ) আপডেট করুন:</h4>
+                <input type="text" placeholder="নতুন জরিপের প্রশ্ন লিখুন..." value={pollQuestionInput} onChange={e => setPollQuestionInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #A7F3D0', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
+                <textarea rows={2} placeholder="অপশনগুলো কমা (,) দিয়ে লিখুন..." value={pollOptionsInput} onChange={e => setPollOptionsInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #A7F3D0', fontSize: '11px', boxSizing: 'border-box' }} />
+                <button onClick={async () => {
+                  if (!pollQuestionInput.trim() || !pollOptionsInput.trim()) return;
+                  const ops = pollOptionsInput.split(',').map(o => o.trim()).filter(o => o);
+                  await setDoc(doc(db, "settings", "active_poll"), {
+                    question: pollQuestionInput,
+                    options: ops,
+                    votes: {}
+                  });
+                  alert('নতুন পোল চালু হয়েছে!');
+                  setPollQuestionInput('');
+                  setPollOptionsInput('');
+                }} style={{ marginTop: '6px', width: '100%', background: '#15803D', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                  পোল চালু করুন
                 </button>
               </div>
 
@@ -1850,44 +1572,23 @@ export default function App() {
                 </div>
               </div>
 
-              {/* মেম্বার ডিলিট ও CSV এক্সেল ডাউনলোড */}
+              {/* মেম্বার ডিলিট তালিকা */}
               <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
-                  <button 
-                    onClick={() => {
-                      const csvContent = "data:text/csv;charset=utf-8,নাম,মোবাইল,গ্রাম,ঠিকানা,জার্সি সাইজ\n" + 
-                        allUsers.map(e => "\"" + e.name + "\",\"" + e.phone + "\",\"" + e.village + "\",\"" + e.area + "\",\"" + e.tshirt + "\"").join("\n");
-                      const encodedUri = encodeURI(csvContent);
-                      const link = document.createElement("a");
-                      link.setAttribute("href", encodedUri);
-                      link.setAttribute("download", "Sandikona_2014_Members.csv");
-                      document.body.appendChild(link);
-                      link.click();
-                    }}
-                    style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}
-                  >
-                    📥 এক্সেল ডাউনলোড
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px', maxHeight: '150px', overflowY: 'auto' }}>
                   {allUsers.map((m, idx) => (
                     <div key={m.uid} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <strong>{(idx + 1) + ". " + m.name}</strong> ({m.phone})<br/>
                         <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
                       </div>
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        <a href={"tel:" + m.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>📞 কল</a>
-                        <button onClick={async () => {
-                          if (window.confirm("আপনি কি \"" + m.name + "\"-কে তালিকা থেকে বাদ দিতে চান?")) {
-                            await deleteDoc(doc(db, "users", m.uid));
-                          }
-                        }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
-                          🗑️ বাদ
-                        </button>
-                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm("আপনি কি \"" + m.name + "\"-কে তালিকা থেকে বাদ দিতে চান?")) {
+                          await deleteDoc(doc(db, "users", m.uid));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
                     </div>
                   ))}
                 </div>
