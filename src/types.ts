@@ -10,19 +10,7 @@ export interface UserProfile {
   avatarUrl?: string;
   coverUrl?: string;
   bio?: string;
-  friendsCount?: number;
-  dob?: string; // Date of Birth (YYYY-MM-DD)
-  fcmToken?: string; // Firebase Cloud Messaging Token
   createdAt: number;
-}
-
-export interface FriendRequest {
-  id: string; 
-  senderUid: string;
-  senderName: string;
-  receiverUid: string;
-  status: 'pending' | 'accepted' | 'rejected';
-  timestamp: number;
 }
 
 export interface PostItem {
@@ -30,10 +18,10 @@ export interface PostItem {
   authorUid: string;
   authorName: string;
   authorVillage: string;
+  authorAvatar?: string;
   content: string;
   mediaUrl?: string;
-  mediaType?: 'image' | 'video';
-  likes: string[];
+  likes: string[]; // UIDs
   commentsCount: number;
   timestamp: number;
   dateStr: string;
@@ -47,12 +35,21 @@ export interface PostComment {
   timestamp: number;
 }
 
-export interface MemoryItem {
+export interface StoryItem {
   id: string;
-  uploader: string;
-  caption: string;
+  authorUid: string;
+  authorName: string;
   mediaUrl: string;
-  mediaType: 'image' | 'video';
+  timestamp: number;
+  expiresAt: number;
+}
+
+export interface FriendRequest {
+  id: string;
+  senderUid: string;
+  senderName: string;
+  receiverUid: string;
+  status: 'pending' | 'accepted' | 'rejected';
   timestamp: number;
 }
 
@@ -81,8 +78,6 @@ export interface ChatMsg {
   senderUid?: string;
   text?: string;
   fileUrl?: string;
-  fileType?: string;
-  fileName?: string;
   timestamp: number;
   time: string;
 }
@@ -91,16 +86,5 @@ export interface ActiveCall {
   id: string;
   caller: string;
   status: 'ringing' | 'connected' | 'ended';
-  timestamp: number;
-}
-
-export interface EventRegistration {
-  id: string; 
-  uid: string;
-  name: string;
-  phone: string;
-  tshirt: string;
-  guestCount: number;
-  paymentStatus: 'unpaid' | 'paid';
   timestamp: number;
 }
