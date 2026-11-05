@@ -3,9 +3,10 @@ import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, 
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment, StoryItem, FriendRequest } from "./types";
+import ChatRoom from "./components/ChatRoom"; // নতুন যুক্ত করা চ্যাট ফাইল
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'directory' | 'profile' | 'friends'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'directory' | 'profile' | 'friends' | 'chat'>('home');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -17,10 +18,16 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
   const [authVillage, setAuthVillage] = useState('');
+  const [authArea, setAuthArea] = useState('');
+  const [authTshirt, setAuthTshirt] = useState('L');
+  const [authError, setAuthError] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  // চ্যাটের জন্য নতুন স্টেট
+  const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
 
   // Social Feed States
   const [posts, setPosts] = useState<PostItem[]>([]);
-  const [stories, setStories] = useState<StoryItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
@@ -29,9 +36,8 @@ export default function App() {
 
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [myFriends, setMyFriends] = useState<string[]>([]);
-  const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
 
-  // ফায়ারবেস Auth ও ডাটা লিসেনার
+  // ফায়ারবেস লিসেনার
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -56,20 +62,11 @@ export default function App() {
       }
     });
 
-    // Posts & Stories Listener
     const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20));
     onSnapshot(qPosts, (snap) => {
       const list: PostItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
       setPosts(list);
-    });
-
-    // Stories (Only unexpired)
-    const qStories = query(collection(db, "stories"), where("expiresAt", ">", Date.now()), orderBy("expiresAt", "desc"));
-    onSnapshot(qStories, (snap) => {
-      const list: StoryItem[] = [];
-      snap.forEach(d => list.push({ id: d.id, ...d.data() } as StoryItem));
-      setStories(list);
     });
 
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
@@ -83,10 +80,7 @@ export default function App() {
 
   // কমেন্ট লিসেনার
   useEffect(() => {
-    if (!activeCommentsPostId) {
-      setCommentsList([]);
-      return;
-    }
+    if (!activeCommentsPostId) return;
     const qComments = query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc"));
     const unsub = onSnapshot(qComments, (snap) => {
       const list: PostComment[] = [];
@@ -106,9 +100,6 @@ export default function App() {
 
   const handleLogout = async () => { if (window.confirm("লগআউট করতে চান?")) { await signOut(auth); setActiveTab('home'); } };
 
-  // ==========================================
-  // 📝 Phase 3: Post & Story Actions
-  // ==========================================
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
@@ -120,7 +111,6 @@ export default function App() {
         authorUid: currentUser.uid,
         authorName: userProfile.name,
         authorVillage: userProfile.village,
-        authorAvatar: userProfile.avatarUrl || null,
         content: newPostText.trim(),
         likes: [],
         commentsCount: 0,
@@ -128,13 +118,7 @@ export default function App() {
         dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       });
       setNewPostText('');
-      setActiveToast({ title: 'সফল!', body: 'আপনার পোস্টটি প্রকাশিত হয়েছে।', icon: '✅' });
-      setTimeout(() => setActiveToast(null), 3000);
-    } catch (err) {
-      alert('পোস্ট করতে সমস্যা হয়েছে।');
-    } finally {
-      setIsPosting(false);
-    }
+    } catch (err) {} finally { setIsPosting(false); }
   };
 
   const handleToggleLike = async (post: PostItem) => {
@@ -142,40 +126,33 @@ export default function App() {
     const currentLikes = post.likes || [];
     const isLiked = currentLikes.includes(currentUser.uid);
     const updatedLikes = isLiked ? currentLikes.filter(uid => uid !== currentUser.uid) : [...currentLikes, currentUser.uid];
-    
     try { await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true }); } catch (e) {}
   };
 
   const handleAddComment = async (e: React.FormEvent, postId: string) => {
     e.preventDefault();
-    if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
-    if (!commentInput.trim()) return;
-
+    if (!currentUser || !userProfile) return;
     try {
-      await addDoc(collection(db, "posts", postId, "comments"), {
-        authorName: userProfile.name,
-        authorUid: currentUser.uid,
-        text: commentInput.trim(),
-        timestamp: Date.now()
-      });
+      await addDoc(collection(db, "posts", postId, "comments"), { authorName: userProfile.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
       const targetPost = posts.find(p => p.id === postId);
-      if (targetPost) {
-        await setDoc(doc(db, "posts", postId), { commentsCount: (targetPost.commentsCount || 0) + 1 }, { merge: true });
-      }
+      if (targetPost) await setDoc(doc(db, "posts", postId), { commentsCount: (targetPost.commentsCount || 0) + 1 }, { merge: true });
       setCommentInput('');
-    } catch (e) { alert('মন্তব্য পোস্ট করা যায়নি।'); }
+    } catch (e) {}
   };
 
   const handleDeletePost = async (postId: string, authorUid: string) => {
-    if (!currentUser) return;
-    if (currentUser.uid === authorUid || userProfile?.role === 'super_admin') {
-      if (window.confirm("পোস্টটি মুছে ফেলতে চান?")) {
-        await deleteDoc(doc(db, "posts", postId));
-      }
-    } else { alert('আপনি এই পোস্ট মুছতে পারবেন না।'); }
+    if (currentUser && (currentUser.uid === authorUid || userProfile?.role === 'super_admin')) {
+      if (window.confirm("পোস্টটি মুছে ফেলতে চান?")) await deleteDoc(doc(db, "posts", postId));
+    }
   };
 
-  // Pending Screen Logic
+  // প্রাইভেট চ্যাট শুরু করার ফাংশন
+  const startPrivateChat = (member: UserProfile) => {
+    if (!currentUser) { setShowAuthModal(true); return; }
+    setPrivateChatRecipient(member);
+    setActiveTab('chat');
+  };
+
   if (userProfile && userProfile.status === 'pending' && userProfile.role !== 'super_admin') {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#F3F6F4' }}>
@@ -188,12 +165,6 @@ export default function App() {
   return (
     <div style={{ fontFamily: 'sans-serif', backgroundColor: '#F3F6F4', minHeight: '100vh', paddingBottom: '85px', margin: 0, userSelect: 'none' }}>
       
-      {activeToast && (
-        <div style={{ position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)', width: '92%', maxWidth: '460px', backgroundColor: '#0F172A', color: '#fff', padding: '12px', borderRadius: '12px', zIndex: 9999 }}>
-          {activeToast.icon} {activeToast.title} - {activeToast.body}
-        </div>
-      )}
-
       {/* Top Nav */}
       <div style={{ background: '#0A4D2E', color: '#fff', padding: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 }}>
         <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold' }}>Reunion 2027</h2>
@@ -209,29 +180,9 @@ export default function App() {
             ========================================== */}
         {activeTab === 'home' && (
           <div>
-            {/* Story Bar */}
-            <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '10px', marginBottom: '14px' }}>
-              <div style={{ minWidth: '80px', height: '120px', background: '#E2E8F0', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '1px solid #CBD5E1', cursor: 'pointer' }}>
-                <span style={{ fontSize: '24px' }}>+</span>
-                <span style={{ fontSize: '10px', fontWeight: 'bold' }}>স্টোরি দিন</span>
-              </div>
-              {/* Dummy Story for UI */}
-              <div style={{ minWidth: '80px', height: '120px', background: '#0A4D2E', borderRadius: '12px', position: 'relative', overflow: 'hidden' }}>
-                <div style={{ position: 'absolute', bottom: '5px', left: '5px', color: '#fff', fontSize: '10px', fontWeight: 'bold' }}>রাসেল</div>
-              </div>
-            </div>
-
-            {/* Create Post Box */}
             <div style={{ background: '#fff', borderRadius: '16px', padding: '12px', marginBottom: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
               <form onSubmit={handleCreatePost}>
-                <textarea
-                  rows={3}
-                  placeholder={currentUser ? `${userProfile?.name}, স্কুল জীবনের কোনো স্মৃতি শেয়ার করুন...` : "পোস্ট করতে লগইন করুন..."}
-                  value={newPostText}
-                  onChange={e => setNewPostText(e.target.value)}
-                  disabled={!currentUser}
-                  style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }}
-                />
+                <textarea rows={3} placeholder={currentUser ? `${userProfile?.name}, কিছু শেয়ার করুন...` : "পোস্ট করতে লগইন করুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} disabled={!currentUser} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '13px', outline: 'none', boxSizing: 'border-box' }} />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
                   <button type="submit" disabled={isPosting || !currentUser} style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold' }}>
                     {isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন'}
@@ -240,7 +191,6 @@ export default function App() {
               </form>
             </div>
 
-            {/* Newsfeed Posts */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {posts.map(post => {
                 const isLiked = currentUser && post.likes.includes(currentUser.uid);
@@ -248,44 +198,23 @@ export default function App() {
                   <div key={post.id} style={{ background: '#fff', borderRadius: '16px', padding: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#137547', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                          {post.authorName.charAt(0)}
-                        </div>
-                        <div>
-                          <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#0F172A' }}>{post.authorName}</h4>
-                          <span style={{ fontSize: '10px', color: '#64748B' }}>{post.dateStr} • {post.authorVillage}</span>
-                        </div>
+                        <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#137547', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>{post.authorName.charAt(0)}</div>
+                        <div><h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#0F172A' }}>{post.authorName}</h4><span style={{ fontSize: '10px', color: '#64748B' }}>{post.dateStr}</span></div>
                       </div>
-                      {(currentUser?.uid === post.authorUid || userProfile?.role === 'super_admin') && (
-                        <button onClick={() => handleDeletePost(post.id, post.authorUid)} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '16px' }}>🗑️</button>
-                      )}
+                      {(currentUser?.uid === post.authorUid || userProfile?.role === 'super_admin') && <button onClick={() => handleDeletePost(post.id, post.authorUid)} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '16px' }}>🗑️</button>}
                     </div>
                     
                     <p style={{ fontSize: '13px', color: '#334155', whiteSpace: 'pre-line', margin: '0 0 12px 0' }}>{post.content}</p>
                     
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', borderBottom: '1px solid #E2E8F0', paddingBottom: '8px', marginBottom: '8px' }}>
-                      <span>❤️ {post.likes.length} লাইক</span>
-                      <span>💬 {post.commentsCount} কমেন্ট</span>
-                    </div>
-
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button onClick={() => handleToggleLike(post)} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F8FAFC', color: isLiked ? '#DC2626' : '#475569', border: 'none', padding: '8px', borderRadius: '8px', fontWeight: 'bold' }}>
-                        {isLiked ? '❤️ লাইকড' : '🤍 লাইক'}
-                      </button>
-                      <button onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)} style={{ flex: 1, background: '#F8FAFC', color: '#475569', border: 'none', padding: '8px', borderRadius: '8px', fontWeight: 'bold' }}>
-                        💬 কমেন্ট
-                      </button>
+                      <button onClick={() => handleToggleLike(post)} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F8FAFC', color: isLiked ? '#DC2626' : '#475569', border: 'none', padding: '8px', borderRadius: '8px', fontWeight: 'bold' }}>{isLiked ? '❤️ লাইকড' : '🤍 লাইক'} ({post.likes.length})</button>
+                      <button onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)} style={{ flex: 1, background: '#F8FAFC', color: '#475569', border: 'none', padding: '8px', borderRadius: '8px', fontWeight: 'bold' }}>💬 কমেন্ট ({post.commentsCount})</button>
                     </div>
 
-                    {/* Comments Section */}
                     {activeCommentsPostId === post.id && (
                       <div style={{ marginTop: '12px', background: '#F8FAFC', borderRadius: '10px', padding: '10px' }}>
                         <div style={{ maxHeight: '150px', overflowY: 'auto', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          {commentsList.map(c => (
-                            <div key={c.id} style={{ background: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }}>
-                              <strong style={{ color: '#0A4D2E' }}>{c.authorName}: </strong>{c.text}
-                            </div>
-                          ))}
+                          {commentsList.map(c => <div key={c.id} style={{ background: '#fff', padding: '8px', borderRadius: '8px', fontSize: '12px' }}><strong style={{ color: '#0A4D2E' }}>{c.authorName}: </strong>{c.text}</div>)}
                         </div>
                         <form onSubmit={(e) => handleAddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
                           <input type="text" placeholder="মন্তব্য লিখুন..." value={commentInput} onChange={e => setCommentInput(e.target.value)} style={{ flex: 1, padding: '8px', borderRadius: '20px', border: '1px solid #CBD5E1', fontSize: '12px' }} />
@@ -300,6 +229,45 @@ export default function App() {
           </div>
         )}
 
+        {/* ==========================================
+            👥 Directory & Chat Initiate 
+            ========================================== */}
+        {activeTab === 'directory' && (
+          <div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#0A4D2E', fontWeight: 'bold' }}>👥 সহপাঠী ডিরেক্টরি</h3>
+            <input type="text" placeholder="নাম দিয়ে খুঁজুন..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #CBD5E1', marginBottom: '12px', boxSizing: 'border-box' }} />
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {allUsers.filter(u => u.status === 'approved' && u.name.includes(searchQuery)).map(m => (
+                <div key={m.uid} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A' }}>{m.name}</h4>
+                    <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>🏡 {m.village}</p>
+                  </div>
+                  
+                  {m.uid !== currentUser?.uid && (
+                    <button onClick={() => startPrivateChat(m)} style={{ background: '#128C7E', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                      💬 মেসেজ
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ==========================================
+            💬 Chat Engine (Group & Private) 
+            ========================================== */}
+        {activeTab === 'chat' && (
+          <ChatRoom 
+            currentUser={currentUser} 
+            userProfile={userProfile} 
+            recipientUser={privateChatRecipient} 
+            onBack={() => { setPrivateChatRecipient(null); setActiveTab('directory'); }}
+            onOpenAuth={() => setShowAuthModal(true)} 
+          />
+        )}
       </main>
 
       {/* Auth Modal */}
@@ -310,7 +278,7 @@ export default function App() {
             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <input required type="tel" placeholder="মোবাইল নম্বর *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
               <input required type="password" placeholder="পাসওয়ার্ড *" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-              <button type="submit" disabled={authSubmitting} style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>লগইন করুন</button>
+              <button type="submit" style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>লগইন করুন</button>
             </form>
             <button onClick={() => setShowAuthModal(false)} style={{ marginTop: '10px', background: 'none', border: 'none', color: '#DC2626', width: '100%' }}>বাতিল</button>
           </div>
@@ -325,8 +293,8 @@ export default function App() {
         <button onClick={() => setActiveTab('directory')} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '18px' }}>👥</span><span>ডিরেক্টরি</span>
         </button>
-        <button onClick={() => setActiveTab('profile')} style={{ border: 'none', background: 'none', color: activeTab === 'profile' ? '#0A4D2E' : '#94A3B8', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <span style={{ fontSize: '18px' }}>👤</span><span>প্রোফাইল</span>
+        <button onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' && !privateChatRecipient ? '#0A4D2E' : '#94A3B8', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '18px' }}>💬</span><span>আড্ডা</span>
         </button>
       </nav>
     </div>
