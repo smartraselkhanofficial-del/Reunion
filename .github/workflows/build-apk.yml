@@ -33,17 +33,24 @@ jobs:
       - name: Build Web Assets
         run: npm run build
 
-      - name: Sync Capacitor Android
+      - name: Ensure Complete Android Project
         run: |
-          npx cap add android || true
+          # যদি android ফোল্ডারে build.gradle না থাকে, তবে ফ্রেশ প্রজেক্ট তৈরি করা
+          if [ ! -f "android/app/build.gradle" ]; then
+            [ -f android/app/permanent_debug.keystore ] && cp android/app/permanent_debug.keystore /tmp/permanent.keystore || true
+            rm -rf android
+            npx cap add android
+            mkdir -p android/app
+            [ -f /tmp/permanent.keystore ] && cp /tmp/permanent.keystore android/app/permanent_debug.keystore || true
+          fi
           npx cap sync android
 
       - name: Setup Permanent Signing Key and Increment Version
         run: |
-          # ১. অটোমেটিক ভার্সন বৃদ্ধি যাতে অ্যান্ড্রয়েড আপডেট চেনে
-          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle
+          # ভার্সন কোড বৃদ্ধি
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/g" android/app/build.gradle || true
 
-          # ২. মাইক্রোফোন ও সিস্টেম পারমিশন নিশ্চিত করা
+          # মাইক্রোফোন ও সিস্টেম পারমিশন ইনজেকশন
           sed -i '/<\/manifest>/i \
               <uses-permission android:name="android.permission.RECORD_AUDIO" />\
               <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\
@@ -53,17 +60,12 @@ jobs:
               <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />\
               <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />' android/app/src/main/AndroidManifest.xml || true
 
-          # ৩. স্থায়ী ডিজিটাল কি তৈরি ও সংরক্ষণ (যাতে প্রতিবার একই সিগনেচার থাকে)
+          # স্থায়ী ডিজিটাল কি নিশ্চিত করা
           mkdir -p ~/.android
           if [ ! -f android/app/permanent_debug.keystore ]; then
-            keytool -genkeypair -v -storetype PKCS12 -keystore android/app/permanent_debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sandikona2014,OU=Reunion,O=Sandikona,L=Kendua,C=BD"
-            git config user.name "github-actions"
-            git config user.email "github-actions@github.com"
-            git add android/app/permanent_debug.keystore
-            git commit -m "chore: save permanent keystore for seamless updates" || true
-            git push origin main || true
+            keytool -genkeypair -v -storetype PKCS12 -keystore android/app/permanent_debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Sandikona2014,OU=Reunion,O=Sandikona,L=Kendua,C=BD" || true
           fi
-          cp android/app/permanent_debug.keystore ~/.android/debug.keystore
+          cp android/app/permanent_debug.keystore ~/.android/debug.keystore || true
 
       - name: Build APK
         working-directory: android
