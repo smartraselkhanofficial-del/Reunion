@@ -31,15 +31,6 @@ import ChatRoom from "./components/ChatRoom";
 import VoiceRoom from "./components/VoiceRoom";
 import NotificationCenter from "./components/NotificationCenter";
 
-interface PollData {
-  question: string;
-  optionA: string;
-  optionB: string;
-  votesA: string[];
-  votesB: string[];
-  isActive: boolean;
-}
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school'>('home');
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,17 +50,10 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // চ্যাট, ভয়েস রুম ও নোটিফিকেশন হাব স্টেট
+  // ১-অন-১ চ্যাট, ভয়েস রুম ও নোটিফিকেশন হাব
   const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
   const [showLiveVoiceRoom, setShowLiveVoiceRoom] = useState(false);
-  const [showNotifCenter, setShowNotifCenter] = useState(false);
-  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
-
-  // জরিপ / পোল (Poll) স্টেট
-  const [activePoll, setActivePoll] = useState<PollData | null>(null);
-  const [pollQuestionInput, setPollQuestionInput] = useState('');
-  const [pollOptAInput, setPollOptAInput] = useState('');
-  const [pollOptBInput, setPollOptBInput] = useState('');
+  const [showNotificationHub, setShowNotificationHub] = useState(false);
 
   // সোশ্যাল টাইমলাইন পোস্ট
   const [posts, setPosts] = useState<PostItem[]>([]);
@@ -105,7 +89,6 @@ export default function App() {
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
   const swReg = useRef<ServiceWorkerRegistration | null>(null);
   const isInitialMembers = useRef(false);
-  const isInitialAdminNotifs = useRef(false);
 
   // ১-অন-১ অডিও কল
   const [incomingCall, setIncomingCall] = useState<ActiveCall | null>(null);
@@ -115,7 +98,7 @@ export default function App() {
   const callTimerRef = useRef<any>(null);
   const ringtoneOscRef = useRef<any>(null);
 
-  // অ্যাডমিন
+  // অ্যাডমিন প্যানেল
   const [showAdmin, setShowAdmin] = useState(false);
   const [newNoticeInput, setNewNoticeInput] = useState('');
   const [newHistoryInput, setNewHistoryInput] = useState('');
@@ -151,7 +134,7 @@ export default function App() {
   const WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
   const MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
 
-  // ইমেজ অপ্টিমাইজার
+  // ইমেজ কম্প্রেশন
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -248,7 +231,11 @@ export default function App() {
       setAuthName('');
       triggerNativeNotification("স্বাগতম!", "অভিনন্দন " + newProfile.name + ", আপনার অ্যাকাউন্ট তৈরি হয়েছে।");
     } catch (err: any) {
-      setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
+      if (err.code === 'auth/email-already-in-use') {
+        setAuthError('এই মোবাইল নম্বর দিয়ে ইতোমধ্যে অ্যাকাউন্ট আছে। লগইন করুন।');
+      } else {
+        setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
+      }
     } finally {
       setAuthSubmitting(false);
     }
@@ -346,6 +333,98 @@ export default function App() {
     setTimeout(() => setActiveToast(null), 6000);
   };
 
+  // ১-অন-১ অডিও কলিং
+  const startRingtone = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      gain.gain.setValueAtTime(0.4, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      ringtoneOscRef.current = { ctx, osc };
+    } catch (e) {}
+  };
+
+  const stopRingtone = () => {
+    if (ringtoneOscRef.current) {
+      try {
+        ringtoneOscRef.current.osc.stop();
+        ringtoneOscRef.current.ctx.close();
+      } catch (e) {}
+      ringtoneOscRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    const unsubCalls = onSnapshot(collection(db, "active_calls"), (snap) => {
+      snap.docChanges().forEach((change) => {
+        const callData = { id: change.doc.id, ...change.doc.data() } as ActiveCall;
+        const myName = userProfile?.name || 'সহপাঠী';
+
+        if (change.type === "added" && callData.status === "ringing" && callData.caller !== myName) {
+          setIncomingCall(callData);
+          startRingtone();
+          triggerNativeNotification("📞 ইনকামিং অডিও কল", callData.caller + " আপনাকে কল দিচ্ছেন...");
+        }
+
+        if (change.type === "modified" || change.type === "removed") {
+          if (callData.status === "ended") {
+            stopRingtone();
+            setIncomingCall(null);
+            setCurrentCallSession(null);
+            if (callTimerRef.current) clearInterval(callTimerRef.current);
+            setCallDuration(0);
+          }
+        }
+      });
+    });
+
+    return () => unsubCalls();
+  }, [userProfile]);
+
+  const acceptIncomingCall = async () => {
+    stopRingtone();
+    if (!incomingCall) return;
+
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      await setDoc(doc(db, "active_calls", incomingCall.id), { status: 'connected' }, { merge: true });
+      setCurrentCallSession(incomingCall);
+      setIncomingCall(null);
+      setCallDuration(0);
+      if (callTimerRef.current) clearInterval(callTimerRef.current);
+      callTimerRef.current = setInterval(() => setCallDuration(p => p + 1), 1000);
+    } catch (e) {
+      alert('মাইক্রোফোন পারমিশন দিন।');
+    }
+  };
+
+  const rejectOrEndCall = async () => {
+    stopRingtone();
+    if (incomingCall) {
+      await setDoc(doc(db, "active_calls", incomingCall.id), { status: 'ended' }, { merge: true });
+      setIncomingCall(null);
+    }
+    if (currentCallSession) {
+      await setDoc(doc(db, "active_calls", currentCallSession.id), { status: 'ended' }, { merge: true });
+      setCurrentCallSession(null);
+    }
+    if (callTimerRef.current) clearInterval(callTimerRef.current);
+    setCallDuration(0);
+  };
+
+  const formatTimer = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return m + ":" + s;
+  };
+
   // লাইভ সময় ও কাউন্টার
   useEffect(() => {
     const sscDate = new Date('2014-05-17T00:00:00');
@@ -387,7 +466,7 @@ export default function App() {
     }
   }, [memories.length]);
 
-  // ফায়ারবেস ডেটা লিসেনার
+  // ডেটাবেস লিসেনার
   useEffect(() => {
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
@@ -399,7 +478,6 @@ export default function App() {
         snap.docChanges().forEach((c) => {
           if (c.type === "added") {
             const m = c.doc.data() as UserProfile;
-            setUnreadNotifCount(prev => prev + 1);
             triggerNativeNotification("🎉 নতুন সহপাঠী যুক্ত হয়েছেন!", m.name + " (" + (m.village || m.area) + ") পুনর্মিলনীতে যোগ দিয়েছেন।", "🎓");
           }
         });
@@ -407,29 +485,6 @@ export default function App() {
         isInitialMembers.current = true;
       }
     }, () => setIsLoading(false));
-
-    const qAdminNotifs = query(collection(db, "admin_broadcasts"), orderBy("timestamp", "asc"));
-    const unsubAdminBroadcast = onSnapshot(qAdminNotifs, (snap) => {
-      if (isInitialAdminNotifs.current) {
-        snap.docChanges().forEach((c) => {
-          if (c.type === "added") {
-            const d = c.doc.data();
-            setUnreadNotifCount(prev => prev + 1);
-            triggerNativeNotification(d.title || "📢 অ্যাডমিন বার্তা", d.body || "", "📢");
-          }
-        });
-      } else {
-        isInitialAdminNotifs.current = true;
-      }
-    });
-
-    const unsubPoll = onSnapshot(doc(db, "settings", "active_poll"), (d) => {
-      if (d.exists()) {
-        setActivePoll(d.data() as PollData);
-      } else {
-        setActivePoll(null);
-      }
-    });
 
     const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"));
     const unsubPosts = onSnapshot(qPosts, (snap) => {
@@ -469,8 +524,6 @@ export default function App() {
 
     return () => {
       unsubUsers();
-      unsubAdminBroadcast();
-      unsubPoll();
       unsubPosts();
       unsubMemories();
       unsubPride();
@@ -499,50 +552,7 @@ export default function App() {
     return () => unsubComments();
   }, [activeCommentsPostId]);
 
-  // জরিপ ভোট হ্যান্ডলার
-  const handleVotePoll = async (choice: 'A' | 'B') => {
-    if (!currentUser || !activePoll) {
-      alert('ভোট দিতে প্রথমে লগইন করুন।');
-      setShowAuthModal(true);
-      return;
-    }
-
-    const uid = currentUser.uid;
-    let newVotesA = (activePoll.votesA || []).filter(id => id !== uid);
-    let newVotesB = (activePoll.votesB || []).filter(id => id !== uid);
-
-    if (choice === 'A') newVotesA.push(uid);
-    else newVotesB.push(uid);
-
-    await setDoc(doc(db, "settings", "active_poll"), {
-      votesA: newVotesA,
-      votesB: newVotesB
-    }, { merge: true });
-  };
-
-  // অ্যাডমিন জরিপ তৈরি হ্যান্ডলার
-  const handleCreatePoll = async () => {
-    if (!pollQuestionInput.trim() || !pollOptAInput.trim() || !pollOptBInput.trim()) {
-      alert('জরিপের প্রশ্ন এবং দুটি অপশনই পূরণ করুন।');
-      return;
-    }
-
-    await setDoc(doc(db, "settings", "active_poll"), {
-      question: pollQuestionInput.trim(),
-      optionA: pollOptAInput.trim(),
-      optionB: pollOptBInput.trim(),
-      votesA: [],
-      votesB: [],
-      isActive: true
-    });
-
-    setPollQuestionInput('');
-    setPollOptAInput('');
-    setPollOptBInput('');
-    alert('নতুন জরিপ হোমপেজে চালু হয়েছে!');
-  };
-
-  // পোস্ট হ্যান্ডলার
+  // পোস্ট তৈরি ও লাইক
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
@@ -623,20 +633,33 @@ export default function App() {
       }
 
       setCommentInput('');
-    } catch (e) {}
+    } catch (e) {
+      alert('মন্তব্য পোস্ট করা যায়নি।');
+    }
   };
 
   const handleDeletePost = async (postId: string, authorUid: string) => {
     if (!currentUser) return;
     const isAuthorized = currentUser.uid === authorUid || userProfile?.role === 'super_admin';
-    if (!isAuthorized) return;
-    if (!window.confirm("আপনি কি নিশ্চিতভাবে এই পোস্টটি মুছে ফেলতে চান?")) return;
-    try { await deleteDoc(doc(db, "posts", postId)); } catch (err) {}
+    if (!isAuthorized) {
+      alert('শুধুমাত্র পোস্টদাতা বা অ্যাডমিন এই পোস্ট ডিলিট করতে পারবেন।');
+      return;
+    }
+
+    if (!window.confirm("আপনি কি নিশ্চিতভাবে এই পোস্টটি টাইমলাইন থেকে মুছে ফেলতে চান?")) return;
+
+    try {
+      await deleteDoc(doc(db, "posts", postId));
+      alert('পোস্টটি মুছে ফেলা হয়েছে।');
+    } catch (err) {
+      alert('ডিলিট করা যায়নি।');
+    }
   };
 
   const handleUploadMemoryFree = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) {
+      alert('স্মৃতি আপলোড করার জন্য প্রথমে লগইন করুন।');
       setShowAuthModal(true);
       return;
     }
@@ -658,7 +681,9 @@ export default function App() {
       setShowMemoryUploadModal(false);
       setSelectedMemFile(null);
       setMemCaption('');
+      alert('স্মৃতি সফলভাবে সংরক্ষিত হয়েছে!');
     } catch (err) {
+      alert('আপলোড ত্রুটি হয়েছে।');
       setMemUploadProgress(null);
     }
   };
@@ -666,17 +691,21 @@ export default function App() {
   const handleHeaderBgUploadFree = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     try {
       const compressedBg = await compressImage(file);
       setHeaderBgUrl(compressedBg);
       await setDoc(doc(db, "settings", "app_config"), { headerBg: compressedBg }, { merge: true });
-      alert('হেডার ব্যাকগ্রাউন্ড ছবি আপডেট হয়েছে!');
-    } catch (err) {}
+      alert('হেডার ব্যাকগ্রাউন্ড ছবি সবার জন্য লাইভ আপডেট হয়েছে!');
+    } catch (err) {
+      alert('ছবি আপলোডে সমস্যা হয়েছে।');
+    }
   };
 
   const handleAddPrideSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prideName.trim() || !prideProfession.trim()) return;
+
     try {
       await addDoc(collection(db, "batch_pride"), {
         name: prideName.trim(),
@@ -688,8 +717,17 @@ export default function App() {
         phone: pridePhone.trim()
       });
       setShowAddPrideModal(false);
-      setPrideName(''); setPrideProfession(''); setPrideOrg(''); setPrideVillage(''); setPrideFullAddress(''); setPrideDetails(''); setPridePhone('');
-    } catch (e) {}
+      setPrideName('');
+      setPrideProfession('');
+      setPrideOrg('');
+      setPrideVillage('');
+      setPrideFullAddress('');
+      setPrideDetails('');
+      setPridePhone('');
+      alert('ব্যাচের গৌরবে যুক্ত হয়েছে!');
+    } catch (e) {
+      alert('ব্যর্থ হয়েছে।');
+    }
   };
 
   const handleAddTeacherSubmit = async (e: React.FormEvent) => {
@@ -703,7 +741,11 @@ export default function App() {
         phone: teachPhone.trim()
       });
       setShowAddTeacherModal(false);
-      setTeachName(''); setTeachSubject(''); setTeachDesig(''); setTeachPhone('');
+      setTeachName('');
+      setTeachSubject('');
+      setTeachDesig('');
+      setTeachPhone('');
+      alert('শিক্ষকের পরিচিতি যুক্ত হয়েছে!');
     } catch (e) {}
   };
 
@@ -719,29 +761,32 @@ export default function App() {
       setAdminBroadcastTitle('');
       setAdminBroadcastMsg('');
       alert('সবার ফোনের নোটিফিকেশন বারে পৌঁছে গেছে!');
-    } catch (err) {} finally {
+    } catch (err) {
+      alert('ব্যর্থ হয়েছে।');
+    } finally {
       setIsSendingBroadcast(false);
     }
   };
 
   const handleShareApp = async () => {
     const finalDownloadUrl = apkDownloadUrl.trim() || 'https://github.com';
-    const shareText = "🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে যুক্ত হোন!\n\n📲 ডাউনলোড লিংক:\n" + finalDownloadUrl;
+    const shareText = "🎉 সান্দিকোনা স্কুল এন্ড কলেজ — এসএসসি ব্যাচ ২০১৪ পুনর্মিলনী ২০২৭\nআমাদের বন্ধুদের অফিশিয়াল অ্যাপে এখনই যুক্ত হোন ও স্মৃতি শেয়ার করুন!\n\n📲 অ্যাপ ডাউনলোড লিংক:\n" + finalDownloadUrl;
     if (navigator.share) {
       try { await navigator.share({ title: 'পুনর্মিলনী ২০২৭ - এসএসসি ২০১৪', text: shareText }); } catch (err) {}
     } else {
       navigator.clipboard.writeText(shareText);
-      alert('ডাউনলোড লিংক কপি হয়েছে!');
+      alert('অ্যাপের ডাউনলোড লিংক ও দাওয়াত কপি করা হয়েছে!');
     }
   };
 
   const startPrivateChat = (member: UserProfile) => {
     if (!currentUser) {
+      alert('মেসেজ পাঠাতে প্রথমে লগইন করুন।');
       setShowAuthModal(true);
       return;
     }
     if (member.uid === currentUser.uid) {
-      alert('নিজের সাথে চ্যাট করা যাবে না!');
+      alert('আপনি নিজের সাথে চ্যাট করতে পারবেন না!');
       return;
     }
     setPrivateChatRecipient(member);
@@ -749,11 +794,6 @@ export default function App() {
   };
 
   const filteredMembers = allUsers.filter(m => m.name.toLowerCase().includes(searchQuery.toLowerCase()) || m.area.toLowerCase().includes(searchQuery.toLowerCase()) || m.village.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  // পোল শতকরা হিসাব
-  const totalVotes = activePoll ? ((activePoll.votesA?.length || 0) + (activePoll.votesB?.length || 0)) : 0;
-  const pctA = totalVotes > 0 && activePoll ? Math.round(((activePoll.votesA?.length || 0) / totalVotes) * 100) : 0;
-  const pctB = totalVotes > 0 && activePoll ? (100 - pctA) : 0;
 
   return (
     <div style={{
@@ -784,12 +824,17 @@ export default function App() {
           display: 'flex',
           alignItems: 'center',
           gap: '10px',
-          border: '1.5px solid #F59E0B'
+          border: '1.5px solid #F59E0B',
+          animation: 'slideDown 0.3s ease-out'
         }}>
           <div style={{ fontSize: '22px' }}>{activeToast.icon}</div>
           <div style={{ flex: 1, overflow: 'hidden' }}>
-            <h5 style={{ margin: '0 0 2px 0', fontSize: '12px', color: '#FCD34D', fontWeight: '800' }}>{activeToast.title}</h5>
-            <p style={{ margin: 0, fontSize: '11px', color: '#F1F5F9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeToast.body}</p>
+            <h5 style={{ margin: '0 0 2px 0', fontSize: '12px', color: '#FCD34D', fontWeight: '800' }}>
+              {activeToast.title}
+            </h5>
+            <p style={{ margin: 0, fontSize: '11px', color: '#F1F5F9', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {activeToast.body}
+            </p>
           </div>
           <button onClick={() => setActiveToast(null)} style={{ background: 'none', border: 'none', color: '#94A3B8', fontSize: '16px', cursor: 'pointer' }}>✕</button>
         </div>
@@ -797,14 +842,12 @@ export default function App() {
 
       {/* নোটিফিকেশন হাব ড্রয়ার */}
       <NotificationCenter
-        isOpen={showNotifCenter}
-        onClose={() => setShowNotifCenter(false)}
-        onItemClick={(type) => {
-          if (type === 'member') setActiveTab('directory');
-        }}
+        isOpen={showNotificationHub}
+        onClose={() => setShowNotificationHub(false)}
+        onItemClick={() => {}}
       />
 
-      {/* ভয়েস রুম ওভারলে */}
+      {/* ইন-অ্যাপ লাইভ ভয়েস রুম ওভারলে */}
       {showLiveVoiceRoom && (
         <VoiceRoom
           currentUser={currentUser}
@@ -813,7 +856,98 @@ export default function App() {
         />
       )}
 
-      {/* টপ স্ট্যাটাস ও নোটিফিকেশন বেল বার */}
+      {/* ইনকামিং অডিও কল স্ক্রিন */}
+      {incomingCall && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.96)',
+          zIndex: 1000000,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '50px 20px',
+          color: '#FFFFFF'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <span style={{ fontSize: '12px', color: '#38BDF8', background: 'rgba(56, 189, 248, 0.2)', padding: '4px 14px', borderRadius: '20px', fontWeight: '800' }}>
+              📞 ইনকামিং অডিও কল
+            </span>
+            <h2 style={{ fontSize: '26px', margin: '16px 0 4px 0', fontWeight: '900' }}>
+              {incomingCall.caller}
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: '#94A3B8' }}>আপনাকে সরাসরি অডিও কল দিচ্ছেন...</p>
+          </div>
+
+          <div style={{
+            width: '120px',
+            height: '120px',
+            borderRadius: '50%',
+            backgroundColor: '#1E293B',
+            border: '4px solid #10B981',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '48px',
+            boxShadow: '0 0 40px rgba(16, 185, 129, 0.5)'
+          }}>
+            👤
+          </div>
+
+          <div style={{ display: 'flex', gap: '40px', alignItems: 'center' }}>
+            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>✕</button>
+            <button onClick={acceptIncomingCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#16A34A', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
+          </div>
+        </div>
+      )}
+
+      {/* রানিং অডিও কল স্ক্রিন */}
+      {currentCallSession && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: '#0F172A',
+          zIndex: 1000000,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '40px 20px',
+          color: '#FFFFFF'
+        }}>
+          <div style={{ textAlign: 'center' }}>
+            <span style={{ fontSize: '11px', color: '#10B981', background: 'rgba(16, 185, 129, 0.2)', padding: '4px 12px', borderRadius: '20px', fontWeight: '800' }}>● সংযুক্ত অডিও কল</span>
+            <h3 style={{ fontSize: '22px', margin: '12px 0 2px 0', fontWeight: '900' }}>
+              {currentCallSession.caller === userProfile?.name ? 'আপনার ডায়াল করা কল' : currentCallSession.caller}
+            </h3>
+            <span style={{ fontSize: '14px', color: '#38BDF8', fontFamily: 'monospace' }}>{formatTimer(callDuration)}</span>
+          </div>
+
+          <div style={{
+            width: '120px',
+            height: '120px',
+            borderRadius: '50%',
+            backgroundColor: '#1E293B',
+            border: isMicMuted ? '4px solid #EF4444' : '4px solid #10B981',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '48px'
+          }}>
+            {isMicMuted ? '🔇' : '🎙️'}
+          </div>
+
+          <div style={{ display: 'flex', gap: '30px', alignItems: 'center' }}>
+            <button onClick={() => setIsMicMuted(!isMicMuted)} style={{ width: '54px', height: '54px', borderRadius: '50%', backgroundColor: isMicMuted ? '#EF4444' : '#334155', color: '#FFFFFF', border: 'none', fontSize: '20px', cursor: 'pointer' }}>
+              {isMicMuted ? '🔇' : '🎙️'}
+            </button>
+            <button onClick={rejectOrEndCall} style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: '#DC2626', color: '#FFFFFF', border: 'none', fontSize: '24px', cursor: 'pointer' }}>📞</button>
+          </div>
+        </div>
+      )}
+
+      {/* অথেনটিকেশন ও নোটিফিকেশন বার */}
       <div style={{
         background: '#062B1A',
         color: '#E2E8F0',
@@ -825,37 +959,35 @@ export default function App() {
         borderBottom: '1px solid rgba(255,255,255,0.1)'
       }}>
         {currentUser && userProfile ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ color: '#10B981', fontWeight: '800' }}>● {userProfile.name}</span>
             {userProfile.role === 'super_admin' && (
-              <span style={{ background: '#F59E0B', color: '#000', padding: '1px 5px', borderRadius: '4px', fontSize: '9px', fontWeight: '800' }}>অ্যাডমিন</span>
+              <span style={{ background: '#F59E0B', color: '#000', padding: '1px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: '800' }}>
+                অ্যাডমিন
+              </span>
             )}
           </div>
         ) : (
-          <span style={{ color: '#FCD34D' }}>⚠️ লগইন করা নেই</span>
+          <span style={{ color: '#FCD34D' }}>⚠️ অ্যাকাউন্টে লগইন করা নেই</span>
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          {/* স্মার্ট নোটিফিকেশন বেল বাটন */}
+          {/* নোটিফিকেশন বেল আইকন */}
           <button
-            onClick={() => { setShowNotifCenter(true); setUnreadNotifCount(0); }}
-            style={{ background: 'rgba(255,255,255,0.12)', border: 'none', color: '#FFFFFF', padding: '4px 8px', borderRadius: '8px', cursor: 'pointer', position: 'relative', fontSize: '12px' }}
+            onClick={() => setShowNotificationHub(true)}
+            style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '15px', cursor: 'pointer', padding: '2px 4px' }}
+            title="নোটিফিকেশন দেখুন"
           >
             🔔
-            {unreadNotifCount > 0 && (
-              <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', color: '#FFFFFF', fontSize: '9px', fontWeight: '900', padding: '1px 5px', borderRadius: '10px' }}>
-                {unreadNotifCount}
-              </span>
-            )}
           </button>
 
           {currentUser ? (
-            <button onClick={handleLogout} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '3px 8px', borderRadius: '5px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+            <button onClick={handleLogout} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
               লগআউট
             </button>
           ) : (
-            <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '3px 10px', borderRadius: '5px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}>
-              লগইন / নিবন্ধন
+            <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '2px 10px', borderRadius: '4px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}>
+              লগইন
             </button>
           )}
         </div>
@@ -864,12 +996,25 @@ export default function App() {
       {/* হোম ব্যানার */}
       {activeTab === 'home' ? (
         <>
-          <div style={{ background: 'linear-gradient(90deg, #0A4D2E 0%, #06321D 100%)', color: '#FEF08A', padding: '5px 12px', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(212, 175, 55, 0.3)' }}>
+          <div style={{
+            background: 'linear-gradient(90deg, #0A4D2E 0%, #06321D 100%)',
+            color: '#FEF08A',
+            padding: '5px 12px',
+            fontSize: '11px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '1px solid rgba(212, 175, 55, 0.3)'
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '700' }}>
               <span>🕒 সময়:</span>
-              <span style={{ color: '#FFFFFF', background: 'rgba(0,0,0,0.35)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px' }}>{currentTimeStr || '...'}</span>
+              <span style={{ color: '#FFFFFF', background: 'rgba(0,0,0,0.35)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', fontSize: '11px' }}>
+                {currentTimeStr || '...'}
+              </span>
             </div>
-            <div style={{ fontSize: '10px', color: '#E2E8F0', fontWeight: '600' }}>📅 {currentDateStr || '...'}</div>
+            <div style={{ fontSize: '10px', color: '#E2E8F0', fontWeight: '600' }}>
+              📅 {currentDateStr || '...'}
+            </div>
           </div>
 
           <header style={{
@@ -884,14 +1029,19 @@ export default function App() {
             textAlign: 'center',
             borderBottomLeftRadius: '20px',
             borderBottomRightRadius: '20px',
-            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+            position: 'relative'
           }}>
             <div style={{ maxWidth: '500px', margin: '0 auto' }}>
               <span style={{ fontSize: '10px', backgroundColor: 'rgba(0, 0, 0, 0.65)', color: '#FEF08A', padding: '3px 12px', borderRadius: '16px', border: '1.2px solid rgba(212, 175, 55, 0.7)', fontWeight: '800', display: 'inline-block' }}>
                 সান্দিকোনা স্কুল এন্ড কলেজ
               </span>
-              <h1 style={{ fontSize: '24px', margin: '6px 0 1px 0', fontWeight: '900', textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>পুনর্মিলনী ২০২৭</h1>
-              <p style={{ fontSize: '13px', margin: 0, fontWeight: '800', color: '#F0FDF4', textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>এসএসসি ব্যাচ ২০১৪</p>
+              <h1 style={{ fontSize: '24px', margin: '6px 0 1px 0', fontWeight: '900', textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
+                পুনর্মিলনী ২০২৭
+              </h1>
+              <p style={{ fontSize: '13px', margin: 0, fontWeight: '800', color: '#F0FDF4', textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+                এসএসসি ব্যাচ ২০১৪
+              </p>
               <div style={{ marginTop: '6px', display: 'inline-block', backgroundColor: 'rgba(0, 0, 0, 0.65)', padding: '3px 12px', borderRadius: '10px', fontSize: '10px', color: '#F8FAFC', fontWeight: '700' }}>
                 🤝 আয়োজনে: এসএসসি ২০১৪ ব্যাচ পুনর্মিলনী সংসদ
               </div>
@@ -899,21 +1049,27 @@ export default function App() {
           </header>
 
           <div style={{ backgroundColor: '#0F172A', color: '#F8FAFC', padding: '6px 10px', display: 'flex', alignItems: 'center', overflow: 'hidden', borderBottom: '2px solid #D4AF37' }}>
-            <span style={{ backgroundColor: '#DC2626', color: '#FFFFFF', fontSize: '9px', fontWeight: '800', padding: '2px 6px', borderRadius: '4px', marginRight: '8px', flexShrink: 0 }}>📢 নোটিশ:</span>
+            <span style={{ backgroundColor: '#DC2626', color: '#FFFFFF', fontSize: '9px', fontWeight: '800', padding: '2px 6px', borderRadius: '4px', marginRight: '8px', flexShrink: 0 }}>
+              📢 নোটিশ:
+            </span>
             <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
-              <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '11px', color: '#FEF08A', fontWeight: '600' }}>{announcement}</marquee>
+              <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '11px', color: '#FEF08A', fontWeight: '600' }}>
+                {announcement}
+              </marquee>
             </div>
           </div>
 
           <div style={{ maxWidth: '500px', margin: '10px auto 0 auto', padding: '0 12px' }}>
             <div style={{ background: 'linear-gradient(135deg, #0A4D2E 0%, #116B3E 100%)', color: '#FFFFFF', borderRadius: '14px', padding: '10px 12px', textAlign: 'center', border: '1px solid rgba(212, 175, 55, 0.4)' }}>
-              <span style={{ fontSize: '10px', color: '#FEF08A', fontWeight: '700', display: 'block', marginBottom: '4px' }}>⏳ ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়:</span>
+              <span style={{ fontSize: '10px', color: '#FEF08A', fontWeight: '700', display: 'block', marginBottom: '4px' }}>
+                ⏳ ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়:
+              </span>
               <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
-                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.years}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>বছর</span></div>
-                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.months}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>মাস</span></div>
-                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.days}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>দিন</span></div>
-                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.hours}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>ঘণ্টা</span></div>
-                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.minutes}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>মিনিট</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FFFFFF' }}>{batchTimeElapsed.years}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>বছর</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FFFFFF' }}>{batchTimeElapsed.months}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>মাস</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FFFFFF' }}>{batchTimeElapsed.days}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>দিন</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FFFFFF' }}>{batchTimeElapsed.hours}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>ঘণ্টা</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FFFFFF' }}>{batchTimeElapsed.minutes}</span><span style={{ fontSize: '9px', display: 'block', color: '#D1FAE5' }}>মিনিট</span></div>
                 <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>{batchTimeElapsed.seconds}</span><span style={{ fontSize: '9px', display: 'block', color: '#FEF08A' }}>সেকেন্ড</span></div>
               </div>
             </div>
@@ -921,14 +1077,20 @@ export default function App() {
 
           <div style={{ maxWidth: '500px', margin: '8px auto 0 auto', padding: '0 12px' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noreferrer" style={{ background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)', color: '#FFFFFF', padding: '9px', borderRadius: '12px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800', fontSize: '11px' }}><span>💬</span> WhatsApp গ্রুপ</a>
-              <a href={MESSENGER_GROUP_URL} target="_blank" rel="noreferrer" style={{ background: 'linear-gradient(135deg, #00B2FF 0%, #006AFF 100%)', color: '#FFFFFF', padding: '9px', borderRadius: '12px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800', fontSize: '11px' }}><span>⚡</span> Messenger গ্রুপ</a>
+              <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noreferrer" style={{ background: 'linear-gradient(135deg, #25D366 0%, #128C7E 100%)', color: '#FFFFFF', padding: '9px', borderRadius: '12px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800', fontSize: '11px' }}>
+                <span>💬</span> WhatsApp গ্রুপ
+              </a>
+              <a href={MESSENGER_GROUP_URL} target="_blank" rel="noreferrer" style={{ background: 'linear-gradient(135deg, #00B2FF 0%, #006AFF 100%)', color: '#FFFFFF', padding: '9px', borderRadius: '12px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontWeight: '800', fontSize: '11px' }}>
+                <span>⚡</span> Messenger গ্রুপ
+              </a>
             </div>
           </div>
         </>
       ) : (
         <div style={{ background: '#0A4D2E', color: '#FFFFFF', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #D4AF37' }}>
-          <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}>← হোমে ফিরুন</button>
+          <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ background: 'none', border: 'none', color: '#FEF08A', fontSize: '13px', fontWeight: '800', cursor: 'pointer' }}>
+            ← হোমে ফিরুন
+          </button>
           <span style={{ fontSize: '13px', fontWeight: '800' }}>
             {activeTab === 'memories' && '📸 পুরনো দিনের স্মৃতি'}
             {activeTab === 'pride' && '🏆 আমাদের ব্যাচের গৌরব'}
@@ -946,54 +1108,57 @@ export default function App() {
         {activeTab === 'home' && (
           <div>
             {/* লাইভ ভয়েস রুম কার্ড */}
-            <div style={{ background: 'linear-gradient(135deg, #06321D 0%, #0A4D2E 100%)', color: '#FFFFFF', borderRadius: '16px', padding: '14px', marginBottom: '14px', border: '1.5px solid #10B981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{
+              background: 'linear-gradient(135deg, #06321D 0%, #0A4D2E 100%)',
+              color: '#FFFFFF',
+              borderRadius: '16px',
+              padding: '14px',
+              marginBottom: '14px',
+              border: '1.5px solid #10B981',
+              boxShadow: '0 4px 16px rgba(16, 185, 129, 0.25)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
               <div>
-                <span style={{ fontSize: '10px', color: '#10B981', fontWeight: '800', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 8px', borderRadius: '10px' }}>● লাইভ কনফারেন্স</span>
-                <h3 style={{ margin: '4px 0 2px 0', fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>🎙️ এসএসসি ২০১৪ ভয়েস রুম</h3>
-                <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0' }}>একসাথে কথা বলুন ও মিটিং করুন</p>
+                <span style={{ fontSize: '10px', color: '#10B981', fontWeight: '800', background: 'rgba(16, 185, 129, 0.2)', padding: '2px 8px', borderRadius: '10px' }}>
+                  ● লাইভ ভয়েস কনফারেন্স
+                </span>
+                <h3 style={{ margin: '4px 0 2px 0', fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>
+                  🎙️ এসএসসি ২০১৪ ভয়েস রুম
+                </h3>
+                <p style={{ margin: 0, fontSize: '11px', color: '#E2E8F0' }}>
+                  সবাই একসাথে লাইভ কথা বলুন ও মিটিং করুন
+                </p>
               </div>
+
               <button
                 onClick={() => {
-                  if (!currentUser) { setShowAuthModal(true); return; }
+                  if (!currentUser) {
+                    alert('ভয়েস রুমে যুক্ত হতে প্রথমে লগইন করুন।');
+                    setShowAuthModal(true);
+                    return;
+                  }
                   setShowLiveVoiceRoom(true);
                 }}
-                style={{ background: '#10B981', color: '#FFFFFF', border: 'none', padding: '10px 16px', borderRadius: '12px', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}
+                style={{
+                  background: '#10B981',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '12px',
+                  fontSize: '12px',
+                  fontWeight: '800',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
               >
                 রুমে ঢুকুন 🎧
               </button>
             </div>
 
-            {/* ৭নং ধাপ: লাইভ জরিপ / ভোটিং কার্ড */}
-            {activePoll && activePoll.isActive && (
-              <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '14px', marginBottom: '14px', border: '2px solid #FCD34D', boxShadow: '0 4px 12px rgba(245, 158, 11, 0.1)' }}>
-                <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#B45309', padding: '2px 8px', borderRadius: '6px', fontWeight: '800' }}>📊 ব্যাচ মতামত জরিপ</span>
-                <h4 style={{ margin: '6px 0 10px 0', fontSize: '14px', color: '#0F172A', fontWeight: '800' }}>{activePoll.question}</h4>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <button
-                    onClick={() => handleVotePoll('A')}
-                    style={{ position: 'relative', overflow: 'hidden', background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: '10px', padding: '10px 12px', textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '12px' }}
-                  >
-                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pctA + '%', background: '#DCFCE7', zIndex: 0 }} />
-                    <span style={{ position: 'relative', zIndex: 1 }}>{activePoll.optionA}</span>
-                    <span style={{ position: 'relative', zIndex: 1, color: '#15803D' }}>{pctA + '%'}</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleVotePoll('B')}
-                    style={{ position: 'relative', overflow: 'hidden', background: '#F8FAFC', border: '1px solid #CBD5E1', borderRadius: '10px', padding: '10px 12px', textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', fontWeight: '700', fontSize: '12px' }}
-                  >
-                    <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: pctB + '%', background: '#FEF3C7', zIndex: 0 }} />
-                    <span style={{ position: 'relative', zIndex: 1 }}>{activePoll.optionB}</span>
-                    <span style={{ position: 'relative', zIndex: 1, color: '#B45309' }}>{pctB + '%'}</span>
-                  </button>
-                </div>
-                <span style={{ fontSize: '10px', color: '#64748B', display: 'block', marginTop: '6px', textAlign: 'right' }}>মোট ভোট: {totalVotes} টি</span>
-              </div>
-            )}
-
-            {/* পোস্ট তৈরির বক্স */}
-            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0' }}>
+            {/* নতুন পোস্ট তৈরির বক্স */}
+            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '14px', border: '1px solid #E2E8F0', boxShadow: '0 2px 8px rgba(0,0,0,0.03)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                 <span style={{ fontSize: '18px' }}>✍️</span>
                 <span style={{ fontSize: '12px', fontWeight: '800', color: '#0A4D2E' }}>বন্ধুদের সাথে কিছু শেয়ার করুন:</span>
@@ -1008,74 +1173,165 @@ export default function App() {
                   style={{ width: '100%', padding: '8px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }}
                 />
                 
-                {newPostFile && <div style={{ margin: '6px 0', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>📎 ছবি যুক্ত: {newPostFile.name}</div>}
+                {newPostFile && (
+                  <div style={{ margin: '6px 0', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+                    📎 ছবি যুক্ত হয়েছে: {newPostFile.name}
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                  <input type="file" ref={postFileInputRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) setNewPostFile(f); }} accept="image/*" style={{ display: 'none' }} />
-                  <button type="button" onClick={() => { if (!currentUser) { setShowAuthModal(true); return; } postFileInputRef.current?.click(); }} style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>📷 ছবি যোগ করুন</button>
-                  <button type="submit" disabled={isPosting || !currentUser} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '7px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}>{isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন 🚀'}</button>
+                  <input
+                    type="file"
+                    ref={postFileInputRef}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setNewPostFile(f);
+                    }}
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!currentUser) { alert('লগইন করুন'); setShowAuthModal(true); return; }
+                      postFileInputRef.current?.click();
+                    }}
+                    style={{ background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                  >
+                    📷 ছবি যোগ করুন
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={isPosting || !currentUser}
+                    style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '7px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', opacity: isPosting ? 0.6 : 1 }}
+                  >
+                    {isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন 🚀'}
+                  </button>
                 </div>
               </form>
             </div>
 
-            {/* পোস্ট ফিড */}
+            {/* ফেসবুকের মতো পোস্ট ফিড */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
-              {posts.map((post) => {
-                const isLiked = currentUser ? (post.likes || []).includes(currentUser.uid) : false;
-                const canDelete = currentUser && (currentUser.uid === post.authorUid || userProfile?.role === 'super_admin');
+              {posts.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B', fontSize: '12px' }}>
+                  এখনো কোনো পোস্ট দেওয়া হয়নি। প্রথম পোস্টটি আপনিই করুন!
+                </div>
+              ) : (
+                posts.map((post) => {
+                  const isLiked = currentUser ? (post.likes || []).includes(currentUser.uid) : false;
+                  const canDelete = currentUser && (currentUser.uid === post.authorUid || userProfile?.role === 'super_admin');
 
-                return (
-                  <div key={post.id} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{post.authorName}</h4>
-                        <span style={{ fontSize: '10px', color: '#64748B' }}>🏡 {post.authorVillage} • 🕒 {post.dateStr}</span>
+                  return (
+                    <div key={post.id} style={{ background: '#FFFFFF', borderRadius: '16px', border: '1px solid #E2E8F0', padding: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{post.authorName}</h4>
+                          <span style={{ fontSize: '10px', color: '#64748B' }}>🏡 {post.authorVillage} • 🕒 {post.dateStr}</span>
+                        </div>
+                        {canDelete && (
+                          <button
+                            onClick={() => handleDeletePost(post.id, post.authorUid)}
+                            style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            🗑️ মুছুন
+                          </button>
+                        )}
                       </div>
-                      {canDelete && (
-                        <button onClick={() => handleDeletePost(post.id, post.authorUid)} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '2px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>🗑️ মুছুন</button>
+
+                      {post.content && (
+                        <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#1E293B', lineHeight: '1.5', whiteSpace: 'pre-line' }}>
+                          {post.content}
+                        </p>
+                      )}
+
+                      {post.mediaUrl && (
+                        <div style={{ borderRadius: '10px', overflow: 'hidden', marginBottom: '10px', backgroundColor: '#0F172A' }}>
+                          <img src={post.mediaUrl} alt="Post Attachment" style={{ width: '100%', maxHeight: '350px', objectFit: 'contain', display: 'block' }} />
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px', marginBottom: '8px' }}>
+                        <span>❤️ {(post.likes || []).length} জন লাইক দিয়েছেন</span>
+                        <span>💬 {post.commentsCount || 0} টি মন্তব্য</span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          onClick={() => handleToggleLike(post)}
+                          style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F8FAFC', color: isLiked ? '#DC2626' : '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                        >
+                          <span>{isLiked ? '❤️' : '🤍'}</span> {isLiked ? 'লাইক করেছেন' : 'লাইক দিন'}
+                        </button>
+
+                        <button
+                          onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)}
+                          style={{ flex: 1, background: activeCommentsPostId === post.id ? '#DCFCE7' : '#F8FAFC', color: activeCommentsPostId === post.id ? '#15803D' : '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                        >
+                          <span>💬</span> মন্তব্য করুন
+                        </button>
+                      </div>
+
+                      {activeCommentsPostId === post.id && (
+                        <div style={{ marginTop: '10px', background: '#F8FAFC', borderRadius: '10px', padding: '10px', borderTop: '1px solid #E2E8F0' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto', marginBottom: '8px' }}>
+                            {commentsList.length === 0 ? (
+                              <span style={{ fontSize: '11px', color: '#94A3B8', textAlign: 'center' }}>প্রথম মন্তব্যটি আপনিই করুন!</span>
+                            ) : (
+                              commentsList.map(c => (
+                                <div key={c.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '11px' }}>
+                                  <strong style={{ color: '#0A4D2E' }}>{c.authorName}:</strong> {c.text}
+                                </div>
+                              ))
+                            )}
+                          </div>
+
+                          <form onSubmit={(e) => handleAddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
+                            <input
+                              type="text"
+                              placeholder="মন্তব্য লিখুন..."
+                              value={commentInput}
+                              onChange={e => setCommentInput(e.target.value)}
+                              style={{ flex: 1, padding: '6px 10px', borderRadius: '14px', border: '1px solid #CBD5E1', fontSize: '11px', outline: 'none' }}
+                            />
+                            <button type="submit" style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '14px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                              পাঠান
+                            </button>
+                          </form>
+                        </div>
                       )}
                     </div>
+                  );
+                })
+              )}
+            </div>
 
-                    {post.content && <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#1E293B', lineHeight: '1.5', whiteSpace: 'pre-line' }}>{post.content}</p>}
+            {/* স্মৃতি অ্যালবাম স্লাইডার */}
+            <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '12px', marginBottom: '12px', border: '1px solid #E2E8F0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <h4 style={{ margin: 0, fontSize: '13px', color: '#0A4D2E', fontWeight: '800' }}>📸 পুরনো দিনের স্মৃতি</h4>
+                <span style={{ fontSize: '9px', background: '#DCFCE7', color: '#15803D', padding: '2px 6px', borderRadius: '8px', fontWeight: '700' }}>লাইভ অ্যালবাম</span>
+              </div>
 
-                    {post.mediaUrl && (
-                      <div style={{ borderRadius: '10px', overflow: 'hidden', marginBottom: '10px', backgroundColor: '#0F172A' }}>
-                        <img src={post.mediaUrl} alt="Post" style={{ width: '100%', maxHeight: '350px', objectFit: 'contain', display: 'block' }} />
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#64748B', borderBottom: '1px solid #F1F5F9', paddingBottom: '6px', marginBottom: '8px' }}>
-                      <span>❤️ {(post.likes || []).length} লাইক</span>
-                      <span>💬 {post.commentsCount || 0} মন্তব্য</span>
+              {memories.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '16px', color: '#64748B', background: '#F8FAFC', borderRadius: '12px', fontSize: '11px' }}>
+                  কোনো স্মৃতি যোগ করা হয়নি।
+                </div>
+              ) : (
+                <div>
+                  <div style={{ position: 'relative', height: '170px', borderRadius: '12px', overflow: 'hidden', backgroundColor: '#0F172A' }}>
+                    <img src={memories[currentSlideIndex].mediaUrl} alt="Memory" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', padding: '8px 10px', color: '#FFFFFF' }}>
+                      <p style={{ margin: '0 0 2px 0', fontSize: '11px', fontWeight: '700' }}>{memories[currentSlideIndex].caption}</p>
+                      <span style={{ fontSize: '9px', color: '#FEF08A' }}>👤 শেয়ার করেছেন: {memories[currentSlideIndex].uploader}</span>
                     </div>
-
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => handleToggleLike(post)} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F8FAFC', color: isLiked ? '#DC2626' : '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}>
-                        {isLiked ? '❤️ লাইক করেছেন' : '🤍 লাইক দিন'}
-                      </button>
-                      <button onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)} style={{ flex: 1, background: '#F8FAFC', color: '#475569', border: '1px solid #E2E8F0', padding: '6px', borderRadius: '8px', fontSize: '12px', fontWeight: '800', cursor: 'pointer' }}>
-                        💬 মন্তব্য করুন
-                      </button>
-                    </div>
-
-                    {activeCommentsPostId === post.id && (
-                      <div style={{ marginTop: '10px', background: '#F8FAFC', borderRadius: '10px', padding: '10px' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '160px', overflowY: 'auto', marginBottom: '8px' }}>
-                          {commentsList.map(c => (
-                            <div key={c.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #E2E8F0', fontSize: '11px' }}>
-                              <strong style={{ color: '#0A4D2E' }}>{c.authorName}:</strong> {c.text}
-                            </div>
-                          ))}
-                        </div>
-                        <form onSubmit={(e) => handleAddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
-                          <input type="text" placeholder="মন্তব্য লিখুন..." value={commentInput} onChange={e => setCommentInput(e.target.value)} style={{ flex: 1, padding: '6px 10px', borderRadius: '14px', border: '1px solid #CBD5E1', fontSize: '11px', outline: 'none' }} />
-                          <button type="submit" style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 12px', borderRadius: '14px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>পাঠান</button>
-                        </form>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
+                  <button onClick={() => setActiveTab('memories')} style={{ width: '100%', marginTop: '8px', background: '#F0FDF4', color: '#15803D', border: '1px solid #86EFAC', padding: '8px', borderRadius: '10px', fontWeight: '800', fontSize: '11px', cursor: 'pointer' }}>
+                    📸 সমস্ত স্মৃতি দেখতে ক্লিক করুন ({memories.length}টি) →
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* কাউন্টার কার্ড */}
@@ -1087,96 +1343,184 @@ export default function App() {
           </div>
         )}
 
+        {/* খ. স্মৃতি গ্যালারি */}
         {activeTab === 'memories' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>📸 স্মৃতি গ্যালারি</h3>
-              <button onClick={() => setShowMemoryUploadModal(true)} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>স্মৃতি যোগ করুন ➕</button>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>📸 বন্ধুদের স্মৃতি গ্যালারি</h3>
+                <span style={{ fontSize: '10px', color: '#64748B' }}>স্কুল জীবনের সকল ছবি ও ভিডিও</span>
+              </div>
+              <button onClick={() => setShowMemoryUploadModal(true)} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                স্মৃতি যোগ করুন ➕
+              </button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {memories.map((item) => (
-                <div key={item.id} style={{ background: '#FFFFFF', borderRadius: '14px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
-                  <div onContextMenu={(e) => e.preventDefault()} style={{ position: 'relative', width: '100%', backgroundColor: '#000000' }}>
-                    <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
+
+            {memories.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B' }}>কোনো স্মৃতি পাওয়া যায়নি।</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {memories.map((item) => (
+                  <div key={item.id} style={{ background: '#FFFFFF', borderRadius: '14px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                    <div onContextMenu={(e) => e.preventDefault()} style={{ position: 'relative', width: '100%', backgroundColor: '#000000', userSelect: 'none' }}>
+                      <img src={item.mediaUrl} alt={item.caption} style={{ width: '100%', maxHeight: '380px', objectFit: 'contain', display: 'block', pointerEvents: 'none' }} />
+                      <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(0,0,0,0.55)', color: '#FEF08A', fontSize: '8px', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
+                        সান্দিকোনা ২০১৪ স্মৃতি
+                      </div>
+                    </div>
+                    <div style={{ padding: '10px 12px' }}>
+                      <p style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#1E293B', fontWeight: '700' }}>{item.caption}</p>
+                      <span style={{ fontSize: '10px', color: '#0A4D2E', fontWeight: '800', background: '#DCFCE7', padding: '2px 8px', borderRadius: '8px' }}>
+                        👤 আপলোডকারী: {item.uploader}
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ padding: '10px 12px' }}>
-                    <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: '700' }}>{item.caption}</p>
-                    <span style={{ fontSize: '10px', color: '#0A4D2E', fontWeight: '800', background: '#DCFCE7', padding: '2px 8px', borderRadius: '8px' }}>👤 {item.uploader}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* গ. ব্যাচের গৌরব */}
         {activeTab === 'pride' && (
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>🏆 ব্যাচের গৌরব</h3>
-              <button onClick={() => setShowAddPrideModal(true)} style={{ background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>যুক্ত হোন ➕</button>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '16px', color: '#0A4D2E', fontWeight: '800' }}>🏆 ব্যাচের গৌরব</h3>
+                <span style={{ fontSize: '10px', color: '#64748B' }}>সফল সহপাঠীদের তালিকা</span>
+              </div>
+              <button onClick={() => setShowAddPrideModal(true)} style={{ background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px 12px', borderRadius: '10px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                যুক্ত হোন ➕
+              </button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {prideList.map((p) => (
-                <div key={p.id} style={{ background: '#FFFFFF', borderRadius: '16px', padding: '14px', border: '1px solid #FEF08A' }}>
-                  <h4 style={{ margin: '0 0 2px 0', fontSize: '15px', fontWeight: '800' }}>{p.name}</h4>
-                  <span style={{ fontSize: '12px', color: '#D97706', fontWeight: '700' }}>💼 {p.profession}</span>
-                  <div style={{ marginTop: '6px', background: '#F8FAFC', padding: '6px 8px', borderRadius: '8px', fontSize: '11px' }}>
-                    <p style={{ margin: '2px 0' }}><strong>🏡 নিজ গ্রাম:</strong> {p.village}</p>
-                    <p style={{ margin: '2px 0' }}><strong>📍 ঠিকানা:</strong> {p.fullAddress}</p>
+
+            {prideList.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B' }}>
+                এখনো কেউ যুক্ত হননি। আপনার পেশা ও পরিচয় যুক্ত করতে বাটনে চাপ দিন!
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {prideList.map((p) => (
+                  <div key={p.id} style={{ background: '#FFFFFF', borderRadius: '16px', padding: '14px', border: '1px solid #FEF08A' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 2px 0', fontSize: '15px', color: '#0F172A', fontWeight: '800' }}>{p.name}</h4>
+                        <span style={{ fontSize: '12px', color: '#D97706', fontWeight: '700' }}>
+                          💼 {p.profession} {p.organization ? ("(" + p.organization + ")") : ''}
+                        </span>
+                      </div>
+                      <span style={{ background: '#FEF3C7', color: '#B45309', fontSize: '9px', padding: '3px 6px', borderRadius: '6px', fontWeight: '800' }}>
+                        গৌরবময় ব্যক্তিত্ব
+                      </span>
+                    </div>
+
+                    <div style={{ marginTop: '6px', background: '#F8FAFC', padding: '6px 8px', borderRadius: '8px', fontSize: '11px', color: '#334155' }}>
+                      <p style={{ margin: '2px 0' }}><strong>🏡 নিজ গ্রাম:</strong> {p.village || 'সান্দিকোনা'}</p>
+                      <p style={{ margin: '2px 0' }}><strong>📍 পূর্ণ ঠিকানা:</strong> {p.fullAddress || 'কেন্দুয়া, নেত্রকোনা'}</p>
+                    </div>
+
+                    <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#475569', lineHeight: '1.4' }}>{p.details}</p>
+
+                    {p.phone && (
+                      <div style={{ marginTop: '8px', borderTop: '1px solid #F1F5F9', paddingTop: '6px', display: 'flex', justifyContent: 'flex-end' }}>
+                        <a href={"tel:" + p.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700' }}>
+                          📞 যোগাযোগ করুন
+                        </a>
+                      </div>
+                    )}
                   </div>
-                  <p style={{ margin: '6px 0 0 0', fontSize: '11px', color: '#475569' }}>{p.details}</p>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* ঘ. বিদ্যালয়ের ইতিহাস ও শিক্ষক */}
         {activeTab === 'school' && (
           <div>
             <div style={{ background: '#FFFFFF', padding: '14px', borderRadius: '16px', border: '1px solid #E2E8F0', marginBottom: '14px' }}>
-              <h3 style={{ margin: '0 0 6px 0', color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>🏫 বিদ্যালয়ের ইতিহাস</h3>
-              <p style={{ margin: 0, fontSize: '12px', lineHeight: '1.6', whiteSpace: 'pre-line' }}>{schoolHistory}</p>
+              <h3 style={{ margin: '0 0 6px 0', color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>
+                🏫 বিদ্যালয়ের ইতিহাস ও পরিচিতি
+              </h3>
+              <p style={{ margin: 0, fontSize: '12px', color: '#334155', lineHeight: '1.6', whiteSpace: 'pre-line' }}>
+                {schoolHistory}
+              </p>
             </div>
-            <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#0A4D2E', fontWeight: '800' }}>👨‍🏫 শ্রদ্ধেয় শিক্ষকগণ</h4>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {teachers.map((t) => (
-                <div key={t.id} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', fontWeight: '800' }}>{t.name}</h5>
-                    <span style={{ fontSize: '11px', color: '#137547' }}>{t.designation} • {t.subject}</span>
+
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#0A4D2E', fontWeight: '800' }}>
+              👨‍🏫 শ্রদ্ধেয় শিক্ষক ও শিক্ষিকাগণ
+            </h4>
+
+            {teachers.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '20px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B' }}>শিক্ষক তালিকা শীঘ্রই আসবে।</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {teachers.map((t) => (
+                  <div key={t.id} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', color: '#0F172A', fontWeight: '800' }}>{t.name}</h5>
+                      <span style={{ fontSize: '11px', color: '#137547' }}>{t.designation} • বিষয়: {t.subject}</span>
+                    </div>
+                    {t.phone && (
+                      <a href={"tel:" + t.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700' }}>📞 কল</a>
+                    )}
                   </div>
-                  {t.phone && <a href={"tel:" + t.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700' }}>📞 কল</a>}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* ঙ. সহপাঠী ডিরেক্টরি (১-অন-১ চ্যাট বাটন সহ) */}
         {activeTab === 'directory' && (
           <div>
-            <input type="text" placeholder="🔍 নাম বা গ্রাম দিয়ে খুঁজুন..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: '12px', border: '1px solid #CBD5E1', fontSize: '12px', marginBottom: '10px', boxSizing: 'border-box' }} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {filteredMembers.map((m) => (
-                <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', fontWeight: '700' }}>{m.name}</h4>
-                    <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>🏡 {m.village || m.area} • জার্সি: {m.tshirt}</p>
-                  </div>
-                  <button onClick={() => startPrivateChat(m)} style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>💬 ইনবক্স</button>
-                </div>
-              ))}
+            <div style={{ marginBottom: '10px' }}>
+              <input type="text" placeholder="🔍 নাম, গ্রাম বা এলাকা দিয়ে খুঁজুন..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px 14px', borderRadius: '12px', border: '1px solid #CBD5E1', fontSize: '12px', outline: 'none', backgroundColor: '#FFFFFF', boxSizing: 'border-box' }} />
             </div>
+
+            <div style={{ fontSize: '11px', color: '#137547', fontWeight: '700', marginBottom: '8px' }}>
+              মোট নিবন্ধিত সহপাঠী: {filteredMembers.length} জন
+            </div>
+
+            {filteredMembers.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px', background: '#FFFFFF', borderRadius: '14px', color: '#64748B' }}>কোনো সহপাঠী পাওয়া যায়নি।</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredMembers.map((m) => (
+                  <div key={m.uid} style={{ background: '#FFFFFF', padding: '12px', borderRadius: '14px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '14px', color: '#0F172A', fontWeight: '700' }}>{m.name}</h4>
+                      <p style={{ margin: 0, fontSize: '11px', color: '#137547' }}>এসএসসি ২০১৪ • 🏡 {m.village || m.area}</p>
+                      <span style={{ fontSize: '10px', color: '#94A3B8' }}>জার্সি: <strong>{m.tshirt}</strong></span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ background: '#DCFCE7', color: '#15803D', fontSize: '10px', padding: '4px 6px', borderRadius: '6px', fontWeight: '700' }}>✓ ভেরিফাইড</span>
+                      <button
+                        onClick={() => startPrivateChat(m)}
+                        style={{ background: '#075E54', color: '#FFFFFF', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}
+                      >
+                        💬 ইনবক্স
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
+        {/* চ. চ্যাটরুম (গ্রুপ বা ১-অন-১ প্রাইভেট চ্যাট) */}
         {activeTab === 'chat' && (
-          <ChatRoom
-            currentUser={currentUser}
-            userProfile={userProfile}
-            recipientUser={privateChatRecipient}
-            onBack={() => setPrivateChatRecipient(null)}
-            onOpenAuth={() => setShowAuthModal(true)}
-          />
+          <div>
+            <ChatRoom
+              currentUser={currentUser}
+              userProfile={userProfile}
+              recipientUser={privateChatRecipient}
+              onBack={() => setPrivateChatRecipient(null)}
+              onOpenAuth={() => setShowAuthModal(true)}
+            />
+          </div>
         )}
 
       </main>
@@ -1185,100 +1529,370 @@ export default function App() {
       {showAuthModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 100000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '20px', width: '100%', maxWidth: '380px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '17px', fontWeight: '900' }}>{authMode === 'login' ? '🔐 লগইন' : '📝 নতুন নিবন্ধন'}</h3>
-              <button onClick={() => setShowAuthModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px' }}>✕</button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '17px', fontWeight: '900' }}>
+                {authMode === 'login' ? '🔐 সহপাঠী লগইন' : '📝 নতুন অ্যাকাউন্ট নিবন্ধন'}
+              </h3>
+              <button onClick={() => setShowAuthModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
             </div>
-            {authError && <div style={{ background: '#FEF2F2', color: '#B91C1C', padding: '8px', borderRadius: '8px', fontSize: '11px', marginBottom: '10px' }}>{authError}</div>}
+
+            {authError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', padding: '8px 10px', borderRadius: '8px', fontSize: '11px', marginBottom: '10px' }}>
+                {authError}
+              </div>
+            )}
+
             <form onSubmit={authMode === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {authMode === 'signup' && (
                 <>
-                  <input required type="text" placeholder="পূর্ণ নাম *" value={authName} onChange={e => setAuthName(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-                  <input required type="text" placeholder="নিজ গ্রাম *" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-                  <input required type="text" placeholder="বর্তমান ঠিকানা *" value={authArea} onChange={e => setAuthArea(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-                  <select value={authTshirt} onChange={e => setAuthTshirt(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#fff' }}>
-                    <option value="M">Medium (M)</option><option value="L">Large (L)</option><option value="XL">XL</option><option value="XXL">XXL</option>
-                  </select>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>পূর্ণ নাম: *</label>
+                    <input required type="text" placeholder="উদাঃ মোঃ রাসেল মিয়া" value={authName} onChange={e => setAuthName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>নিজ গ্রাম: *</label>
+                    <input required type="text" placeholder="উদাঃ সান্দিকোনা" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>বর্তমান ঠিকানা: *</label>
+                    <input required type="text" placeholder="উদাঃ কেন্দুয়া / ঢাকা" value={authArea} onChange={e => setAuthArea(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: '700' }}>জার্সি সাইজ: *</label>
+                    <select value={authTshirt} onChange={e => setAuthTshirt(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box', background: '#fff' }}>
+                      <option value="M">Medium (M - ৩৮)</option>
+                      <option value="L">Large (L - ৪০)</option>
+                      <option value="XL">Extra Large (XL - ৪২)</option>
+                      <option value="XXL">Double XL (XXL - ৪৪)</option>
+                    </select>
+                  </div>
                 </>
               )}
-              <input required type="tel" placeholder="মোবাইল নম্বর (017...)" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-              <input required type="password" placeholder="পাসওয়ার্ড (৬ অক্ষর)" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-              <button type="submit" disabled={authSubmitting} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800' }}>{authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন করুন'}</button>
-            </form>
-            <div style={{ marginTop: '10px', textAlign: 'center' }}>
-              <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} style={{ background: 'none', border: 'none', color: '#0A4D2E', fontWeight: '800', fontSize: '11px' }}>
-                {authMode === 'login' ? 'নতুন অ্যাকাউন্ট খুলুন' : 'আগে থেকেই অ্যাকাউন্ট আছে? লগইন'}
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700' }}>মোবাইল নম্বর: *</label>
+                <input required type="tel" placeholder="017XXXXXXXX" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '11px', fontWeight: '700' }}>পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর): *</label>
+                <input required type="password" placeholder="গোপন পাসওয়ার্ড দিন" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginTop: '2px', boxSizing: 'border-box' }} />
+              </div>
+
+              <button type="submit" disabled={authSubmitting} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', fontSize: '13px', cursor: 'pointer', marginTop: '4px' }}>
+                {authSubmitting ? 'প্রসেসিং...' : (authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন সম্পন্ন করুন')}
               </button>
+            </form>
+
+            <div style={{ marginTop: '10px', textAlign: 'center', borderTop: '1px solid #E2E8F0', paddingTop: '8px' }}>
+              {authMode === 'login' ? (
+                <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>
+                  অ্যাকাউন্ট নেই? <button onClick={() => { setAuthMode('signup'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#0A4D2E', fontWeight: '800', cursor: 'pointer' }}>এখানে নতুন অ্যাকাউন্ট খুলুন</button>
+                </p>
+              ) : (
+                <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>
+                  ইতোমধ্যে অ্যাকাউন্ট আছে? <button onClick={() => { setAuthMode('login'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#0A4D2E', fontWeight: '800', cursor: 'pointer' }}>সরাসরি লগইন করুন</button>
+                </p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ফুটার */}
-      <footer style={{ maxWidth: '500px', margin: '12px auto', padding: '0 12px' }}>
-        <div style={{ background: '#0F172A', color: '#FFFFFF', padding: '12px 14px', borderRadius: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-          <div><h4 style={{ margin: 0, fontSize: '13px', color: '#38BDF8' }}>📲 অ্যাপটি শেয়ার করুন</h4></div>
-          <button onClick={handleShareApp} style={{ background: '#25D366', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '10px', fontSize: '11px', fontWeight: '700' }}>শেয়ার</button>
+      {/* মেমোরি আপলোড মডাল */}
+      {showMemoryUploadModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>📸 পুরনো স্মৃতি যোগ করুন</h3>
+              <button onClick={() => setShowMemoryUploadModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
+            </div>
+            <form onSubmit={handleUploadMemoryFree} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <input type="text" placeholder="ক্যাপশন বা বিবরণ..." value={memCaption} onChange={e => setMemCaption(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input required type="file" accept="image/*" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) setSelectedMemFile(file);
+              }} style={{ width: '100%', padding: '6px', boxSizing: 'border-box' }} />
+
+              {memUploadProgress && (
+                <div style={{ background: '#DCFCE7', padding: '6px', borderRadius: '6px', textAlign: 'center', fontSize: '11px', color: '#15803D', fontWeight: '700' }}>
+                  {memUploadProgress}
+                </div>
+              )}
+
+              <button type="submit" disabled={memUploadProgress !== null} style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>
+                {memUploadProgress !== null ? 'সংরক্ষণ হচ্ছে...' : 'আপলোড নিশ্চিত করুন'}
+              </button>
+            </form>
+          </div>
         </div>
-        <div onClick={() => { if (userProfile?.role === 'super_admin') setShowAdmin(true); }} style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '14px', padding: '10px', textAlign: 'center', cursor: 'pointer' }}>
-          <p style={{ margin: 0, fontSize: '11px', color: '#137547', fontWeight: '800' }}>📱 অ্যাপ নির্মাতা: স্মার্ট রাসেল খান (01705374798) {userProfile?.role === 'super_admin' ? '👑' : ''}</p>
+      )}
+
+      {/* প্রাইড ও শিক্ষক মডাল */}
+      {showAddPrideModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: '#D97706', fontSize: '15px', fontWeight: '800' }}>🏆 ব্যাচের গৌরবে যুক্ত হোন</h3>
+              <button onClick={() => setShowAddPrideModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
+            </div>
+            <form onSubmit={handleAddPrideSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <input required type="text" placeholder="আপনার পুরো নাম *" value={prideName} onChange={e => setPrideName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input required type="text" placeholder="বর্তমান পেশা বা পদবি *" value={prideProfession} onChange={e => setPrideProfession(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="কর্মস্থল বা প্রতিষ্ঠান" value={prideOrg} onChange={e => setPrideOrg(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input required type="text" placeholder="নিজ গ্রামের নাম *" value={prideVillage} onChange={e => setPrideVillage(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input required type="text" placeholder="পূর্ণ ঠিকানা *" value={prideFullAddress} onChange={e => setPrideFullAddress(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <textarea placeholder="সংক্ষিপ্ত অর্জন বা বিবরণ..." value={prideDetails} onChange={e => setPrideDetails(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input type="tel" placeholder="মোবাইল নম্বর" value={pridePhone} onChange={e => setPridePhone(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <button type="submit" style={{ background: '#D97706', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>
+                যুক্ত করুন
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAddTeacherModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '380px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>👨‍🏫 শিক্ষক পরিচিতি যোগ</h3>
+              <button onClick={() => setShowAddTeacherModal(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', cursor: 'pointer' }}>✕</button>
+            </div>
+            <form onSubmit={handleAddTeacherSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <input required type="text" placeholder="শিক্ষকের নাম *" value={teachName} onChange={e => setTeachName(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="পদবি" value={teachDesig} onChange={e => setTeachDesig(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input type="text" placeholder="বিষয়" value={teachSubject} onChange={e => setTeachSubject(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <input type="tel" placeholder="মোবাইল নম্বর" value={teachPhone} onChange={e => setTeachPhone(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
+              <button type="submit" style={{ background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: '800', cursor: 'pointer' }}>সংরক্ষণ</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* শেয়ার ও ফুটার */}
+      <footer style={{ maxWidth: '500px', margin: '12px auto', padding: '0 12px' }}>
+        <div style={{
+          background: 'linear-gradient(135deg, #1E293B 0%, #0F172A 100%)',
+          color: '#FFFFFF',
+          padding: '12px 14px',
+          borderRadius: '14px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '10px'
+        }}>
+          <div>
+            <h4 style={{ margin: 0, fontSize: '13px', color: '#38BDF8' }}>📲 বন্ধুদের সাথে অ্যাপটি শেয়ার করুন</h4>
+            <p style={{ margin: '2px 0 0 0', fontSize: '10px', color: '#CBD5E1' }}>সরাসরি ডাউনলোড লিংক সহ পাঠান</p>
+          </div>
+          <button onClick={handleShareApp} style={{ background: '#25D366', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '10px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+            শেয়ার করুন
+          </button>
+        </div>
+
+        <div 
+          onClick={() => {
+            if (userProfile?.role === 'super_admin') {
+              setShowAdmin(true);
+            } else {
+              alert('অ্যাডমিন প্যানেলে প্রবেশের জন্য স্মার্ট রাসেল খানের অ্যাকাউন্টে লগইন থাকতে হবে।');
+            }
+          }}
+          style={{ background: '#FFFFFF', border: '1px solid #BBF7D0', borderRadius: '14px', padding: '10px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.03)', cursor: 'pointer' }}
+        >
+          <p style={{ margin: '0 0 2px 0', fontSize: '11px', color: '#137547', fontWeight: '800' }}>
+            📱 অ্যাপটি তৈরি করেছেন: স্মার্ট রাসেল খান {userProfile?.role === 'super_admin' ? '(👑 অ্যাডমিন এক্সেস)' : ''}
+          </p>
+          <p style={{ margin: '2px 0', fontSize: '10px', color: '#334155' }}>
+            সরাসরি যোগাযোগ: <a href="tel:01705374798" style={{ color: '#0A4D2E', fontWeight: '700', textDecoration: 'none' }}>01705374798</a>
+          </p>
         </div>
       </footer>
 
-      {/* বটম ন্যাভিগেশন */}
-      <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-around', padding: '7px 0', zIndex: 1000 }}>
-        <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>🏠</span><span>হোম</span></button>
-        <button onClick={() => { setActiveTab('memories'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>📸</span><span>স্মৃতি</span></button>
-        <button onClick={() => { setActiveTab('pride'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>🏆</span><span>গৌরব</span></button>
-        <button onClick={() => { setActiveTab('directory'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>👥</span><span>সহপাঠী</span></button>
-        <button onClick={() => { setActiveTab('school'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span></button>
-        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: '800', fontSize: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ fontSize: '15px' }}>💬</span><span>আড্ডা</span></button>
+      {/* বটম ন্যাভিগেশন বার */}
+      <nav style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: '#FFFFFF',
+        borderTop: '1px solid #E2E8F0',
+        display: 'flex',
+        justifyContent: 'space-around',
+        padding: '7px 0',
+        zIndex: 1000,
+        boxShadow: '0 -3px 12px rgba(0,0,0,0.05)'
+      }}>
+        <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'home' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏠</span><span>হোম</span>
+        </button>
+        <button onClick={() => { setActiveTab('memories'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'memories' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>📸</span><span>স্মৃতি</span>
+        </button>
+        <button onClick={() => { setActiveTab('pride'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'pride' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏆</span><span>গৌরব</span>
+        </button>
+        <button onClick={() => { setActiveTab('directory'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'directory' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'directory' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>👥</span><span>সহপাঠী</span>
+        </button>
+        <button onClick={() => { setActiveTab('school'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'school' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>🏫</span><span>বিদ্যালয়</span>
+        </button>
+        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#0A4D2E' : '#94A3B8', fontWeight: activeTab === 'chat' ? '800' : '500', fontSize: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          <span style={{ fontSize: '15px' }}>💬</span><span>আড্ডা</span>
+        </button>
       </nav>
 
-      {/* অ্যাডমিন কন্ট্রোল প্যানেল (লাইভ জরিপ তৈরি ও নোটিশ সহ) */}
+      {/* অ্যাডমিন কন্ট্রোল প্যানেল (মডারেশন ও ফুল কন্ট্রোল) */}
       {showAdmin && userProfile?.role === 'super_admin' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '18px', padding: '18px', width: '100%', maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '16px', fontWeight: '800' }}>👑 অ্যাডমিন কন্ট্রোল প্যানেল</h3>
-              <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700' }}>বন্ধ করুন</button>
+              <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>বন্ধ করুন</button>
             </div>
 
-            {/* পুশ নোটিফিকেশন ব্রডকাস্ট */}
-            <div style={{ background: '#FEF3C7', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-              <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E' }}>📢 পুশ নোটিফিকেশন পাঠান:</h4>
-              <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', marginBottom: '5px', boxSizing: 'border-box' }} />
-              <textarea rows={2} placeholder="বার্তা..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', boxSizing: 'border-box' }} />
-              <button onClick={handleSendAdminBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '800' }}>🚀 নোটিফিকেশন পাঠান</button>
-            </div>
-
-            {/* নতুন লাইভ জরিপ / পোল তৈরি */}
-            <div style={{ background: '#E0F2FE', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-              <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#0369A1' }}>📊 নতুন মতামত জরিপ (Poll) চালু করুন:</h4>
-              <input type="text" placeholder="জরিপের প্রশ্ন (উদাঃ জার্সির রঙ কী হবে?)" value={pollQuestionInput} onChange={e => setPollQuestionInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #BAE6FD', marginBottom: '5px', boxSizing: 'border-box' }} />
-              <input type="text" placeholder="অপশন ১ (উদাঃ সবুজ)" value={pollOptAInput} onChange={e => setPollOptAInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #BAE6FD', marginBottom: '5px', boxSizing: 'border-box' }} />
-              <input type="text" placeholder="অপশন ২ (উদাঃ সাদা)" value={pollOptBInput} onChange={e => setPollOptBInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #BAE6FD', boxSizing: 'border-box' }} />
-              <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
-                <button onClick={handleCreatePoll} style={{ flex: 1, background: '#0284C7', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '800', fontSize: '11px' }}>জরিপ চালু করুন</button>
-                {activePoll?.isActive && (
-                  <button onClick={() => setDoc(doc(db, "settings", "active_poll"), { isActive: false }, { merge: true })} style={{ background: '#DC2626', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '800', fontSize: '11px' }}>বন্ধ করুন</button>
-                )}
+            <div>
+              {/* নোটিফিকেশন ব্রডকাস্ট */}
+              <div style={{ background: '#FEF3C7', border: '1.2px solid #FCD34D', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#92400E', fontWeight: '800' }}>📢 সবার ফোনে নোটিফিকেশন পাঠান:</h4>
+                <input type="text" placeholder="বিষয়..." value={adminBroadcastTitle} onChange={e => setAdminBroadcastTitle(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box', marginBottom: '5px' }} />
+                <textarea rows={2} placeholder="বার্তা লিখুন..." value={adminBroadcastMsg} onChange={e => setAdminBroadcastMsg(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #FDE68A', fontSize: '11px', boxSizing: 'border-box' }} />
+                <button onClick={handleSendAdminBroadcast} disabled={isSendingBroadcast} style={{ marginTop: '6px', width: '100%', background: '#D97706', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}>
+                  {isSendingBroadcast ? 'পাঠানো হচ্ছে...' : '🚀 সবার ফোনে নোটিফিকেশন পাঠান'}
+                </button>
               </div>
-            </div>
 
-            {/* ব্যাকগ্রাউন্ড ও সেটিংস */}
-            <div style={{ background: '#F1F5F9', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
-              <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
-              <button onClick={() => bgFileInputRef.current?.click()} style={{ width: '100%', background: '#0D9488', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', marginBottom: '8px', fontWeight: '700', fontSize: '11px' }}>🖼️ হেডার ছবি পরিবর্তন</button>
-              <input type="text" placeholder="APK ডাউনলোড লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', marginBottom: '6px', boxSizing: 'border-box' }} />
-              <textarea rows={2} placeholder="স্ক্রলিং নোটিশ..." value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }} />
-              <button onClick={async () => {
-                const payload: any = {};
-                if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
-                if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
-                await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
-                alert('সেভ হয়েছে!');
-              }} style={{ marginTop: '6px', width: '100%', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '8px', borderRadius: '6px', fontWeight: '700' }}>সেটিংস সেভ করুন</button>
+              {/* হেডার ছবি পরিবর্তন */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#065F46', fontWeight: '800' }}>🖼️ হেডার ব্যাকগ্রাউন্ড ছবি পরিবর্তন:</h4>
+                <input type="file" ref={bgFileInputRef} onChange={handleHeaderBgUploadFree} accept="image/*" style={{ display: 'none' }} />
+                <button onClick={() => bgFileInputRef.current?.click()} style={{ background: '#0D9488', color: '#FFFFFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  গ্যালারি থেকে বন্ধুদের ছবি সিলেক্ট করুন 📷
+                </button>
+              </div>
+
+              {/* APK ডাউনলোড লিংক ও নোটিশ */}
+              <div style={{ background: '#F1F5F9', border: '1.2px solid #CBD5E1', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 4px 0', fontSize: '12px', color: '#0F172A', fontWeight: '800' }}>📥 শেয়ার বাটনের APK ডাউনলোড লিংক:</h4>
+                <input type="text" placeholder="ড্রাইভ বা মিডিয়াফায়ার লিংক..." value={newApkUrlInput} onChange={e => setNewApkUrlInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '8px' }} />
+
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>🏫 বিদ্যালয়ের ইতিহাস লিখুন:</h4>
+                <textarea rows={2} value={newHistoryInput || schoolHistory} onChange={e => setNewHistoryInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box', marginBottom: '6px' }} />
+
+                <h4 style={{ margin: '4px 0', fontSize: '12px', color: '#0F172A' }}>📢 স্ক্রলিং নোটিশ আপডেট:</h4>
+                <textarea rows={2} value={newNoticeInput || announcement} onChange={e => setNewNoticeInput(e.target.value)} style={{ width: '100%', padding: '7px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '11px', boxSizing: 'border-box' }} />
+
+                <button onClick={async () => {
+                  const payload: any = {};
+                  if (newApkUrlInput.trim()) payload.apkUrl = newApkUrlInput.trim();
+                  if (newNoticeInput.trim()) payload.announcement = newNoticeInput.trim();
+                  if (newHistoryInput.trim()) payload.schoolHistory = newHistoryInput.trim();
+
+                  await setDoc(doc(db, "settings", "app_config"), payload, { merge: true });
+                  if (newApkUrlInput.trim()) setApkDownloadUrl(newApkUrlInput.trim());
+                  setNewNoticeInput('');
+                  setNewHistoryInput('');
+                  setNewApkUrlInput('');
+                  alert('সেটিংস সফলভাবে সেভ হয়েছে!');
+                }} style={{ marginTop: '6px', background: '#0A4D2E', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '6px', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>
+                  সেভ ও পাবলিশ করুন
+                </button>
+              </div>
+
+              {/* শিক্ষক তালিকা নিয়ন্ত্রণ */}
+              <div style={{ background: '#ECFDF5', border: '1.2px solid #A7F3D0', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <h4 style={{ margin: 0, fontSize: '12px', color: '#065F46', fontWeight: '800' }}>👨‍🏫 শিক্ষক তালিকা নিয়ন্ত্রণ ({teachers.length} জন):</h4>
+                  <button onClick={() => setShowAddTeacherModal(true)} style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                    + নতুন শিক্ষক
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {teachers.map((t) => (
+                    <div key={t.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #A7F3D0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{t.name}</strong> ({t.designation})<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>বিষয়: {t.subject} {t.phone ? ("| " + t.phone) : ''}</span>
+                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm("আপনি কি \"" + t.name + "\"-কে শিক্ষক তালিকা থেকে বাদ দিতে চান?")) {
+                          await deleteDoc(doc(db, "teachers", t.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* গৌরব তালিকা নিয়ন্ত্রণ */}
+              <div style={{ background: '#FEF9C3', border: '1.2px solid #FDE047', padding: '12px', borderRadius: '12px', marginBottom: '12px' }}>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: '12px', color: '#854D0E', fontWeight: '800' }}>🏆 গৌরব তালিকা নিয়ন্ত্রণ ({prideList.length} জন):</h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {prideList.map((p) => (
+                    <div key={p.id} style={{ background: '#FFFFFF', padding: '6px 8px', borderRadius: '6px', border: '1px solid #FEF08A', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px' }}>
+                      <div>
+                        <strong>{p.name}</strong> - {p.profession}<br/>
+                        <span style={{ fontSize: '9px', color: '#64748B' }}>গ্রাম: {p.village} | ঠিকানা: {p.fullAddress}</span>
+                      </div>
+                      <button onClick={async () => {
+                        if (window.confirm("আপনি কি \"" + p.name + "\"-কে গৌরব তালিকা থেকে বাদ দিতে চান?")) {
+                          await deleteDoc(doc(db, "batch_pride", p.id));
+                        }
+                      }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                        🗑️ বাদ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* মেম্বার ডিলিট ও CSV এক্সেল ডাউনলোড */}
+              <div style={{ borderTop: '1px solid #E2E8F0', paddingTop: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: '800', color: '#137547' }}>নিবন্ধিত মেম্বার ({allUsers.length} জন)</span>
+                  <button 
+                    onClick={() => {
+                      const csvContent = "data:text/csv;charset=utf-8,নাম,মোবাইল,গ্রাম,ঠিকানা,জার্সি সাইজ\n" + 
+                        allUsers.map(e => "\"" + e.name + "\",\"" + e.phone + "\",\"" + e.village + "\",\"" + e.area + "\",\"" + e.tshirt + "\"").join("\n");
+                      const encodedUri = encodeURI(csvContent);
+                      const link = document.createElement("a");
+                      link.setAttribute("href", encodedUri);
+                      link.setAttribute("download", "Sandikona_2014_Members.csv");
+                      document.body.appendChild(link);
+                      link.click();
+                    }}
+                    style={{ background: '#137547', color: '#FFFFFF', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: '800', cursor: 'pointer' }}
+                  >
+                    📥 এক্সেল ডাউনলোড
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                  {allUsers.map((m, idx) => (
+                    <div key={m.uid} style={{ padding: '6px 8px', background: '#F8FAFC', borderRadius: '8px', border: '1px solid #E2E8F0', fontSize: '11px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong>{(idx + 1) + ". " + m.name}</strong> ({m.phone})<br/>
+                        <span style={{ color: '#64748B' }}>গ্রাম: {m.village} | জার্সি: {m.tshirt}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <a href={"tel:" + m.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700' }}>📞 কল</a>
+                        <button onClick={async () => {
+                          if (window.confirm("আপনি কি \"" + m.name + "\"-কে তালিকা থেকে বাদ দিতে চান?")) {
+                            await deleteDoc(doc(db, "users", m.uid));
+                          }
+                        }} style={{ background: '#FEE2E2', color: '#DC2626', border: 'none', padding: '3px 6px', borderRadius: '4px', fontSize: '10px', fontWeight: '700', cursor: 'pointer' }}>
+                          🗑️ বাদ
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
