@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit, where } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
 import { db, auth } from "./firebase";
-import { UserProfile, PostItem, PostComment } from "./types";
+import { UserProfile, PostItem, PostComment, FriendRequest } from "./types";
 import ChatRoom from "./components/ChatRoom";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'directory' | 'profile' | 'chat'>('home');
+  // ৭টি বটম ট্যাব
+  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'directory' | 'chat'>('home');
   const [searchQuery, setSearchQuery] = useState('');
+  const [friendsSubTab, setFriendsSubTab] = useState<'all' | 'requests' | 'online'>('all');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -21,21 +23,18 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // চ্যাট
+  // চ্যাট ও নিউজফিড
   const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
-
-  // সোশ্যাল টাইমলাইন
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
-  const [isPosting, setIsPosting] = useState(false);
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
   const [commentsList, setCommentsList] = useState<PostComment[]>([]);
   const [commentInput, setCommentInput] = useState('');
 
-  // ডেটাবেস স্টেটস
+  // ডেটাবেস ও ফ্রেন্ডস স্টেট
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
-  
-  // ইউটিলিটি
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [myFriends, setMyFriends] = useState<string[]>([]);
   const [announcement, setAnnouncement] = useState('স্বাগতম এস এস সি ব্যাচ ২০১৪ কমিউনিটিতে। সবাই বন্ধুদের আমন্ত্রণ জানান এবং কমিউনিটির সঙ্গে যুক্ত থাকুন।');
   const [currentTimeStr, setCurrentTimeStr] = useState('');
   const [currentDateStr, setCurrentDateStr] = useState('');
@@ -48,8 +47,30 @@ export default function App() {
         onSnapshot(doc(db, "users", user.uid), (docSnap) => {
           if (docSnap.exists()) setUserProfile(docSnap.data() as UserProfile);
         });
+
+        // ফ্রেন্ড রিকোয়েস্ট লিসেনার
+        const qIncoming = query(collection(db, "friend_requests"), where("receiverUid", "==", user.uid));
+        onSnapshot(qIncoming, (snap) => {
+          const list: FriendRequest[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as FriendRequest));
+          setFriendRequests(list);
+        });
+
+        // আমার বন্ধু লিস্ট
+        const qFriends = query(collection(db, "friend_requests"), where("status", "==", "accepted"));
+        onSnapshot(qFriends, (snap) => {
+          const friends: string[] = [];
+          snap.forEach(d => {
+            const req = d.data() as FriendRequest;
+            if (req.senderUid === user.uid) friends.push(req.receiverUid);
+            else if (req.receiverUid === user.uid) friends.push(req.senderUid);
+          });
+          setMyFriends(friends);
+        });
       } else {
         setUserProfile(null);
+        setFriendRequests([]);
+        setMyFriends([]);
       }
     });
 
@@ -77,32 +98,24 @@ export default function App() {
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
 
-    const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20));
-    onSnapshot(qPosts, (snap) => {
+    onSnapshot(query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20)), (snap) => {
       const list: PostItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
       setPosts(list);
     });
 
-    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+    onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
       setAllUsers(list);
     });
 
-    onSnapshot(doc(db, "settings", "app_config"), (d) => {
-      if (d.exists() && d.data()?.announcement) {
-        setAnnouncement(d.data().announcement);
-      }
-    });
-
-    return () => { unsubscribe(); clearInterval(interval); unsubUsers(); };
+    return () => { unsubscribe(); clearInterval(interval); };
   }, []);
 
   useEffect(() => {
     if (!activeCommentsPostId) return;
-    const qComments = query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc"));
-    const unsub = onSnapshot(qComments, (snap) => {
+    const unsub = onSnapshot(query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc")), (snap) => {
       const list: PostComment[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostComment));
       setCommentsList(list);
@@ -142,54 +155,40 @@ export default function App() {
     } catch (e) { alert('নিবন্ধনে সমস্যা হয়েছে।'); }
   };
 
-  const handleCreatePost = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendFriendRequest = async (receiverUid: string) => {
     if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
-    if (!newPostText.trim()) return;
-
-    setIsPosting(true);
+    const reqId = currentUser.uid + "_" + receiverUid;
     try {
-      await addDoc(collection(db, "posts"), {
-        authorUid: currentUser.uid,
-        authorName: userProfile.name,
-        authorVillage: userProfile.village,
-        content: newPostText.trim(),
-        likes: [],
-        commentsCount: 0,
-        timestamp: Date.now(),
-        dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      await setDoc(doc(db, "friend_requests", reqId), {
+        senderUid: currentUser.uid,
+        senderName: userProfile.name,
+        receiverUid: receiverUid,
+        status: 'pending',
+        timestamp: Date.now()
       });
-      setNewPostText('');
-    } catch (err) {} finally { setIsPosting(false); }
+      alert('ফ্রেন্ড রিকোয়েস্ট পাঠানো হয়েছে!');
+    } catch (e) { alert('পাঠানো যায়নি।'); }
   };
 
-  const handleToggleLike = async (post: PostItem) => {
-    if (!currentUser) { setShowAuthModal(true); return; }
-    const isLiked = post.likes.includes(currentUser.uid);
-    const updatedLikes = isLiked ? post.likes.filter(uid => uid !== currentUser.uid) : [...post.likes, currentUser.uid];
-    try { await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true }); } catch (e) {}
-  };
-
-  const handleAddComment = async (e: React.FormEvent, postId: string) => {
-    e.preventDefault();
-    if (!currentUser || !userProfile || !commentInput.trim()) return;
+  const handleAcceptRequest = async (reqId: string) => {
     try {
-      await addDoc(collection(db, "posts", postId, "comments"), { authorName: userProfile.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
-      const target = posts.find(p => p.id === postId);
-      if (target) await setDoc(doc(db, "posts", postId), { commentsCount: (target.commentsCount || 0) + 1 }, { merge: true });
-      setCommentInput('');
+      await setDoc(doc(db, "friend_requests", reqId), { status: 'accepted' }, { merge: true });
+      alert('বন্ধুত্ব গ্রহণ করা হয়েছে!');
     } catch (e) {}
   };
 
+  const handleRejectRequest = async (reqId: string) => {
+    try { await deleteDoc(doc(db, "friend_requests", reqId)); } catch (e) {}
+  };
+
   return (
-    <div style={{ fontFamily: 'system-ui, sans-serif', backgroundColor: '#F0F2F5', minHeight: '100vh', paddingBottom: '85px', margin: 0, color: '#1C1E21' }}>
+    <div style={{ fontFamily: 'system-ui, sans-serif', backgroundColor: '#F0F2F5', minHeight: '100vh', paddingBottom: '90px', margin: 0, color: '#1C1E21' }}>
       
-      {/* 🌟 1. TOP HEADER (Purple/Blue Gradient with Clock & Profile) */}
+      {/* 🌟 3. TOP HEADER */}
       <div style={{ background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 1000, boxShadow: '0 2px 10px rgba(0,0,0,0.15)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '18px', cursor: 'pointer' }}>☰</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div>
-            <h3 style={{ margin: 0, fontSize: '13px', fontWeight: '900' }}>সান্দিকোনা স্কুল এন্ড কলেজ</h3>
+            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: '900' }}>সান্দিকোনা স্কুল এন্ড কলেজ</h3>
             <span style={{ fontSize: '9px', color: '#E9D5FF' }}>এস এস সি ব্যাচ ২০১৪</span>
           </div>
         </div>
@@ -199,13 +198,9 @@ export default function App() {
             <div>{currentTimeStr || '...'}</div>
             <div>{currentDateStr || '...'}</div>
           </div>
-          <div style={{ position: 'relative', cursor: 'pointer' }}>
-            <span style={{ fontSize: '17px' }}>🔔</span>
-            <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', color: '#fff', fontSize: '8px', fontWeight: 'bold', padding: '1px 3px', borderRadius: '50%' }}>৩</span>
-          </div>
-          <span style={{ fontSize: '17px', cursor: 'pointer' }} onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }}>💬</span>
+          <span style={{ fontSize: '18px', cursor: 'pointer' }} onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }}>💬</span>
           {currentUser && userProfile ? (
-            <div onClick={() => setActiveTab('profile')} style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', border: '2px solid #fff' }}>
+            <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '11px' }}>
               {userProfile.name.charAt(0)}
             </div>
           ) : (
@@ -214,112 +209,71 @@ export default function App() {
         </div>
       </div>
 
-      <main style={{ maxWidth: '580px', margin: '0 auto', padding: '10px' }}>
+      <main style={{ maxWidth: '600px', margin: '0 auto', padding: '10px' }}>
         
+        {/* ==========================================
+            🏠 HOME TAB
+            ========================================== */}
         {activeTab === 'home' && (
           <div>
-            {/* 🏫 2. SCHOOL WELCOME BANNER */}
-            <div style={{ background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)', borderRadius: '14px', padding: '14px', color: '#fff', textAlign: 'center', marginBottom: '10px', boxShadow: '0 4px 14px rgba(0,0,0,0.1)', border: '1px solid #7C3AED' }}>
-              <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#F59E0B', margin: '0 auto 6px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', border: '2px solid #fff' }}>🎓</div>
-              <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.2)', padding: '2px 10px', borderRadius: '10px', color: '#FEF08A', fontWeight: 'bold' }}>স্বাগতম</span>
-              <h2 style={{ fontSize: '18px', margin: '4px 0 2px 0', fontWeight: '900' }}>এস এস সি ব্যাচ ২০১৪ কমিউনিটি</h2>
-              <p style={{ margin: '0 0 2px 0', fontSize: '11px', opacity: 0.9 }}>সান্দিকোনা স্কুল এন্ড কলেজ</p>
-              <span style={{ fontSize: '10px', color: '#E9D5FF' }}>📍 সান্দিকোনা, কেন্দুয়া, নেত্রকোনা।</span>
+            <div style={{ backgroundImage: "linear-gradient(135deg, rgba(88, 28, 135, 0.85) 0%, rgba(124, 58, 237, 0.85) 100%), url('/header-bg.jpg')", backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: '16px', padding: '18px', color: '#fff', textAlign: 'center', marginBottom: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.15)' }}>
+              <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.25)', padding: '2px 10px', borderRadius: '10px', color: '#FEF08A', fontWeight: 'bold' }}>স্বাগতম</span>
+              <h2 style={{ fontSize: '20px', margin: '6px 0 2px 0', fontWeight: '900' }}>এস এস সি ব্যাচ ২০১৪ কমিউনিটি</h2>
+              <p style={{ margin: '0 0 2px 0', fontSize: '12px', opacity: 0.95, fontWeight: 'bold' }}>সান্দিকোনা স্কুল এন্ড কলেজ</p>
+              <span style={{ fontSize: '11px', color: '#E9D5FF' }}>📍 সান্দিকোনা, কেন্দুয়া, নেত্রকোনা।</span>
             </div>
 
-            {/* 📢 3. LIVE NOTICE TICKER */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '10px', padding: '7px 10px', display: 'flex', alignItems: 'center', overflow: 'hidden', marginBottom: '10px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-              <span style={{ backgroundColor: '#7C3AED', color: '#FFFFFF', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', marginRight: '8px', flexShrink: 0 }}>
-                🔴 LIVE
-              </span>
+            <div style={{ backgroundColor: '#fff', borderRadius: '10px', padding: '7px 10px', display: 'flex', alignItems: 'center', overflow: 'hidden', marginBottom: '10px', border: '1px solid #E4E6EB' }}>
+              <span style={{ backgroundColor: '#7C3AED', color: '#FFFFFF', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', marginRight: '8px', flexShrink: 0 }}>🔴 LIVE</span>
               <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
-                <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '11px', color: '#4B5563', fontWeight: '600' }}>
-                  {announcement}
-                </marquee>
+                <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '12px', color: '#4B5563', fontWeight: '600' }}>{announcement}</marquee>
               </div>
             </div>
 
-            {/* ⏳ 4. FRIENDSHIP LIVE COUNTER */}
-            <div style={{ background: 'linear-gradient(135deg, #1E3A8A 0%, #1E40AF 100%)', borderRadius: '14px', padding: '12px', marginBottom: '10px', color: '#fff', textAlign: 'center', boxShadow: '0 4px 12px rgba(30,58,138,0.2)' }}>
-              <span style={{ fontSize: '10px', color: '#93C5FD', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>
-                🎓 এস এস সি ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়
-              </span>
+            <div style={{ background: 'linear-gradient(135deg, #1E3A8A 0%, #1E40AF 100%)', borderRadius: '14px', padding: '12px', marginBottom: '10px', color: '#fff', textAlign: 'center' }}>
+              <span style={{ fontSize: '10px', color: '#93C5FD', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🎓 এস এস সি ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়</span>
               <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
-                <div><span style={{ fontSize: '14px', fontWeight: '900' }}>{batchTimeElapsed.years}</span><span style={{ fontSize: '8px', display: 'block', opacity: 0.8 }}>বছর</span></div>
-                <div><span style={{ fontSize: '14px', fontWeight: '900' }}>{batchTimeElapsed.months}</span><span style={{ fontSize: '8px', display: 'block', opacity: 0.8 }}>মাস</span></div>
-                <div><span style={{ fontSize: '14px', fontWeight: '900' }}>{batchTimeElapsed.days}</span><span style={{ fontSize: '8px', display: 'block', opacity: 0.8 }}>দিন</span></div>
-                <div><span style={{ fontSize: '14px', fontWeight: '900' }}>{batchTimeElapsed.hours}</span><span style={{ fontSize: '8px', display: 'block', opacity: 0.8 }}>ঘণ্টা</span></div>
-                <div><span style={{ fontSize: '14px', fontWeight: '900' }}>{batchTimeElapsed.minutes}</span><span style={{ fontSize: '8px', display: 'block', opacity: 0.8 }}>মিনিট</span></div>
-                <div><span style={{ fontSize: '14px', fontWeight: '900', color: '#FEF08A' }}>{batchTimeElapsed.seconds}</span><span style={{ fontSize: '8px', display: 'block', color: '#FEF08A' }}>সেকেন্ড</span></div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.years}</span>বছর</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.months}</span>মাস</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.days}</span>দিন</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.hours}</span>ঘণ্টা</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.minutes}</span>মিনিট</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>{batchTimeElapsed.seconds}</span>সেকেন্ড</div>
               </div>
             </div>
 
-            {/* ✍️ 5. COMPACT POST COMPOSER */}
-            <div style={{ background: '#fff', borderRadius: '14px', padding: '10px 12px', marginBottom: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #E4E6EB' }}>
-              <form onSubmit={handleCreatePost}>
-                <textarea rows={2} placeholder={currentUser ? (userProfile?.name + ", কিছু লিখুন, ছবি দিন...") : "পোস্ট করতে লগইন করুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} disabled={!currentUser} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CCD0D5', fontSize: '12px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#F0F2F5' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
-                  <div style={{ display: 'flex', gap: '8px', fontSize: '10px', color: '#65676B', fontWeight: 'bold' }}>
-                    <span>🖼️ ছবি</span> <span>📹 ভিডিও</span> <span>😊 অনুভূতি</span>
-                  </div>
-                  <button type="submit" disabled={isPosting || !currentUser} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
-                    {isPosting ? 'পোস্ট...' : 'পোস্ট করুন'}
-                  </button>
+            {/* Post Composer */}
+            <div style={{ background: '#fff', borderRadius: '14px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #E4E6EB' }}>
+              <form onSubmit={async (e) => {
+                e.preventDefault();
+                if (!currentUser || !newPostText.trim()) { setShowAuthModal(true); return; }
+                await addDoc(collection(db, "posts"), { authorUid: currentUser.uid, authorName: userProfile?.name || 'সহপাঠী', authorVillage: userProfile?.village || 'সান্দিকোনা', content: newPostText.trim(), likes: [], commentsCount: 0, timestamp: Date.now(), dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) });
+                setNewPostText('');
+              }}>
+                <textarea rows={2} placeholder={currentUser ? (userProfile?.name + ", কিছু লিখুন...") : "পোস্ট করতে লগইন করুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} disabled={!currentUser} style={{ width: '100%', padding: '8px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '12px', outline: 'none', backgroundColor: '#F0F2F5', boxSizing: 'border-box' }} />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>পোস্ট করুন</button>
                 </div>
               </form>
             </div>
 
-            {/* 📰 6. NEWS FEED */}
+            {/* News Feed */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {posts.map(post => {
                 const isLiked = currentUser && post.likes.includes(currentUser.uid);
                 return (
-                  <div key={post.id} style={{ background: '#fff', borderRadius: '14px', padding: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #E4E6EB' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#7C3AED', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '12px' }}>{post.authorName.charAt(0)}</div>
-                        <div>
-                          <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 'bold', color: '#050505' }}>{post.authorName}</h4>
-                          <span style={{ fontSize: '9px', color: '#65676B' }}>{post.dateStr} • {post.authorVillage}</span>
-                        </div>
-                      </div>
-                      {(currentUser?.uid === post.authorUid || userProfile?.role === 'super_admin') && (
-                        <button onClick={() => deleteDoc(doc(db, "posts", post.id))} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '13px', cursor: 'pointer' }}>🗑️</button>
-                      )}
-                    </div>
-                    
-                    <p style={{ fontSize: '12px', color: '#1C1E21', whiteSpace: 'pre-line', margin: '0 0 8px 0' }}>{post.content}</p>
-                    
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#65676B', borderBottom: '1px solid #E4E6EB', paddingBottom: '4px', marginBottom: '6px' }}>
-                      <span>❤️ {post.likes.length} লাইক</span>
-                      <span>💬 {post.commentsCount} কমেন্ট</span>
-                    </div>
-
+                  <div key={post.id} style={{ background: '#fff', borderRadius: '14px', padding: '12px', border: '1px solid #E4E6EB' }}>
+                    <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 'bold', color: '#050505' }}>{post.authorName} <span style={{ fontSize: '9px', color: '#65676B' }}>({post.authorVillage})</span></h4>
+                    <p style={{ fontSize: '12px', color: '#1C1E21', margin: '6px 0' }}>{post.content}</p>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => handleToggleLike(post)} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F0F2F5', color: isLiked ? '#DC2626' : '#65676B', border: 'none', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
-                        {isLiked ? '❤️ লাইকড' : '🤍 লাইক'}
-                      </button>
-                      <button onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)} style={{ flex: 1, background: '#F0F2F5', color: '#65676B', border: 'none', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
-                        💬 কমেন্ট
+                      <button onClick={() => {
+                        if(!currentUser) {setShowAuthModal(true); return;}
+                        const updated = isLiked ? post.likes.filter(id => id !== currentUser.uid) : [...post.likes, currentUser.uid];
+                        setDoc(doc(db, "posts", post.id), { likes: updated }, { merge: true });
+                      }} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F0F2F5', color: isLiked ? '#DC2626' : '#65676B', border: 'none', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
+                        {isLiked ? '❤️ লাইকড' : '🤍 লাইক'} ({post.likes.length})
                       </button>
                     </div>
-
-                    {activeCommentsPostId === post.id && (
-                      <div style={{ marginTop: '8px', background: '#F0F2F5', borderRadius: '8px', padding: '8px' }}>
-                        <div style={{ maxHeight: '120px', overflowY: 'auto', marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {commentsList.map(c => <div key={c.id} style={{ background: '#fff', padding: '5px 8px', borderRadius: '6px', fontSize: '11px' }}><strong style={{ color: '#581C87' }}>{c.authorName}: </strong>{c.text}</div>)}
-                        </div>
-                        <form onSubmit={(e) => {
-                          e.preventDefault();
-                          if (!currentUser || !commentInput.trim()) return;
-                          addDoc(collection(db, "posts", post.id, "comments"), { authorName: userProfile?.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
-                          setCommentInput('');
-                        }} style={{ display: 'flex', gap: '4px' }}>
-                          <input type="text" placeholder="মন্তব্য লিখুন..." value={commentInput} onChange={e => setCommentInput(e.target.value)} style={{ flex: 1, padding: '6px 10px', borderRadius: '16px', border: '1px solid #CCD0D5', fontSize: '11px', outline: 'none' }} />
-                          <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '16px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>পাঠান</button>
-                        </form>
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -327,8 +281,59 @@ export default function App() {
           </div>
         )}
 
+        {/* ==========================================
+            🤝 FRIENDS TAB (Phase 1 Completed)
+            ========================================== */}
+        {activeTab === 'friends' && (
+          <div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#581C87', fontWeight: 'bold' }}>👥 বন্ধু তালিকা ও রিকোয়েস্ট</h3>
+            
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '12px' }}>
+              <button onClick={() => setFriendsSubTab('all')} style={{ flex: 1, background: friendsSubTab === 'all' ? '#7C3AED' : '#E2E8F0', color: friendsSubTab === 'all' ? '#fff' : '#334155', border: 'none', padding: '6px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>সকল বন্ধু ({allUsers.filter(u => u.status === 'approved').length})</button>
+              <button onClick={() => setFriendsSubTab('requests')} style={{ flex: 1, background: friendsSubTab === 'requests' ? '#7C3AED' : '#E2E8F0', color: friendsSubTab === 'requests' ? '#fff' : '#334155', border: 'none', padding: '6px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>অনুরোধ ({friendRequests.filter(r => r.status === 'pending').length})</button>
+            </div>
+
+            {friendsSubTab === 'all' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {allUsers.filter(u => u.status === 'approved' && u.uid !== currentUser?.uid).map(m => {
+                  const isFriend = myFriends.includes(m.uid);
+                  return (
+                    <div key={m.uid} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A' }}>{m.name}</h4>
+                        <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>🏡 {m.village} • {m.area}</p>
+                      </div>
+                      
+                      {isFriend ? (
+                        <button onClick={() => { setPrivateChatRecipient(m); setActiveTab('chat'); }} style={{ background: '#075E54', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>💬 ইনবক্স</button>
+                      ) : (
+                        <button onClick={() => handleSendFriendRequest(m.uid)} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>➕ বন্ধু হোন</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {friendsSubTab === 'requests' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {friendRequests.filter(r => r.status === 'pending').map(req => (
+                  <div key={req.id} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #FCD34D', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#0F172A' }}>{req.senderName}</span>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button onClick={() => handleAcceptRequest(req.id)} style={{ background: '#16A34A', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>কনফার্ম</button>
+                      <button onClick={() => handleRejectRequest(req.id)} style={{ background: '#EF4444', color: '#fff', border: 'none', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>ডিলিট</button>
+                    </div>
+                  </div>
+                ))}
+                {friendRequests.filter(r => r.status === 'pending').length === 0 && <div style={{ textAlign: 'center', color: '#64748B', fontSize: '12px', padding: '20px' }}>কোনো নতুন রিকোয়েস্ট নেই।</div>}
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'chat' && (
-          <ChatRoom currentUser={currentUser} userProfile={userProfile} onOpenAuth={() => setShowAuthModal(true)} />
+          <ChatRoom currentUser={currentUser} userProfile={userProfile} recipientUser={privateChatRecipient} onBack={() => { setPrivateChatRecipient(null); setActiveTab('home'); }} onOpenAuth={() => setShowAuthModal(true)} />
         )}
       </main>
 
@@ -336,23 +341,35 @@ export default function App() {
       {showAuthModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '360px' }}>
-            <h3 style={{ margin: '0 0 12px 0', color: '#581C87' }}>লগইন করুন</h3>
-            <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <h3 style={{ margin: '0 0 12px 0', color: '#581C87' }}>{authMode === 'login' ? '🔐 লগইন' : '📝 নিবন্ধন'}</h3>
+            <form onSubmit={authMode === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {authMode === 'signup' && (
+                <>
+                  <input required type="text" placeholder="আপনার নাম *" value={authName} onChange={e => setAuthName(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+                  <input required type="text" placeholder="নিজ গ্রাম *" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+                </>
+              )}
               <input required type="tel" placeholder="মোবাইল নম্বর *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
               <input required type="password" placeholder="পাসওয়ার্ড *" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
-              <button type="submit" style={{ background: '#581C87', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>লগইন করুন</button>
+              <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন সম্পন্ন করুন'}</button>
             </form>
+            <div style={{ marginTop: '10px', textAlign: 'center' }}>
+              {authMode === 'login' ? 
+                <button onClick={() => setAuthMode('signup')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>নতুন অ্যাকাউন্ট খুলুন</button> : 
+                <button onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>সরাসরি লগইন করুন</button>
+              }
+            </div>
             <button onClick={() => setShowAuthModal(false)} style={{ marginTop: '10px', background: 'none', border: 'none', color: '#DC2626', width: '100%', cursor: 'pointer' }}>বাতিল</button>
           </div>
         </div>
       )}
 
-      {/* 🧭 7. FIXED BOTTOM NAVIGATION BAR (Exactly 7 Buttons as specified in Master Prompt) */}
+      {/* 🧭 9. FIXED BOTTOM NAVIGATION BAR (Exactly 7 Buttons) */}
       <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E4E6EB', display: 'flex', justifyContent: 'space-around', padding: '6px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
         <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '16px' }}>🏠</span><span>হোম</span>
         </button>
-        <button onClick={() => alert('বন্ধু সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => setActiveTab('friends')} style={{ border: 'none', background: 'none', color: activeTab === 'friends' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '16px' }}>👥</span><span>বন্ধু</span>
         </button>
         <button onClick={() => alert('স্মৃতি সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
