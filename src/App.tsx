@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
+// @ts-ignore
+import { PushNotifications } from '@capacitor/push-notifications';
 import { db, auth } from "./firebase";
-import { UserProfile, PostItem, PostComment, MemoryItem, BatchPrideItem, TeacherItem, ChatMsg, ActiveCall, EventRegistration } from "./types";
+import { UserProfile, PostItem, PostComment, EventRegistration } from "./types";
 import ChatRoom from "./components/ChatRoom";
 
 export default function App() {
@@ -40,16 +42,54 @@ export default function App() {
   const [showEventRegModal, setShowEventRegModal] = useState(false);
   const [eventGuestCount, setEventGuestCount] = useState(0);
 
+  // প্রোফাইল এডিট (জন্মদিন)
+  const [dobInput, setDobInput] = useState('');
+
   // অ্যাডমিন প্যানেল
   const [showAdmin, setShowAdmin] = useState(false);
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
+
+  // ==========================================
+  // 🔔 Phase 6: Push Notifications Engine
+  // ==========================================
+  const registerPushNotifications = async (uid: string) => {
+    try {
+      let permStatus = await PushNotifications.checkPermissions();
+      if (permStatus.receive === 'prompt') {
+        permStatus = await PushNotifications.requestPermissions();
+      }
+      if (permStatus.receive !== 'granted') return;
+
+      await PushNotifications.register();
+
+      PushNotifications.addListener('registration', async (token) => {
+        // ফায়ারবেসে ইউজারের টোকেন সেভ করা
+        await setDoc(doc(db, "users", uid), { fcmToken: token.value }, { merge: true });
+      });
+
+      PushNotifications.addListener('pushNotificationReceived', (notification) => {
+        triggerNativeNotification(notification.title || "নতুন নোটিশ", notification.body || "🔔");
+      });
+    } catch (e) {
+      console.log("Push notifications not supported on web/dev environment.");
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
         onSnapshot(doc(db, "users", user.uid), (docSnap) => {
-          if (docSnap.exists()) setUserProfile(docSnap.data() as UserProfile);
+          if (docSnap.exists()) {
+            const p = docSnap.data() as UserProfile;
+            setUserProfile(p);
+            if (p.dob) setDobInput(p.dob);
+            
+            // লগইন হলে ডিভাইস টোকেন জেনারেট করা (শুধুমাত্র অ্যাপ্রুভড হলে)
+            if (p.status === 'approved') {
+              registerPushNotifications(user.uid);
+            }
+          }
         });
       } else {
         setUserProfile(null);
@@ -69,7 +109,6 @@ export default function App() {
       setAllUsers(list);
     });
 
-    // Phase 5: ইভেন্ট রেজিস্ট্রেশন লিসেনার
     const unsubEvents = onSnapshot(collection(db, "event_registrations"), (snap) => {
       const list: EventRegistration[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as EventRegistration));
@@ -100,9 +139,6 @@ export default function App() {
 
   const handleLogout = async () => { if (window.confirm("লগআউট করতে চান?")) { await signOut(auth); setActiveTab('home'); } };
 
-  // ==========================================
-  // 📝 Phase 5: Event Registration Actions
-  // ==========================================
   const handleEventRegistration = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) return;
@@ -126,12 +162,19 @@ export default function App() {
 
   const handlePaymentStatus = async (uid: string, status: 'unpaid' | 'paid') => {
     if (userProfile?.role !== 'super_admin') return;
-    try {
-      await setDoc(doc(db, "event_registrations", uid), { paymentStatus: status }, { merge: true });
-    } catch (e) {}
+    try { await setDoc(doc(db, "event_registrations", uid), { paymentStatus: status }, { merge: true }); } catch (e) {}
   };
 
-  // সোশ্যাল পোস্ট
+  const handleUpdateDOB = async () => {
+    if (!currentUser) return;
+    try {
+      await setDoc(doc(db, "users", currentUser.uid), { dob: dobInput }, { merge: true });
+      alert("জন্মতারিখ সফলভাবে আপডেট হয়েছে!");
+    } catch (e) {
+      alert("আপডেট করতে সমস্যা হয়েছে।");
+    }
+  };
+
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
@@ -191,6 +234,10 @@ export default function App() {
   const hasRegisteredForEvent = currentUser ? eventRegs.some(r => r.uid === currentUser.uid) : false;
   const myEventReg = currentUser ? eventRegs.find(r => r.uid === currentUser.uid) : null;
 
+  // বার্থডে সেলিব্রেশন লজিক (আজ কার কার জন্মদিন)
+  const todayStr = new Date().toISOString().slice(5, 10); // MM-DD
+  const birthdayBoys = allUsers.filter(u => u.dob && u.dob.slice(5, 10) === todayStr);
+
   return (
     <div style={{ fontFamily: 'sans-serif', backgroundColor: '#F3F6F4', minHeight: '100vh', paddingBottom: '85px', margin: 0, userSelect: 'none' }}>
       
@@ -215,11 +262,22 @@ export default function App() {
       <main style={{ maxWidth: '600px', margin: '0 auto', padding: '14px' }}>
         
         {/* ==========================================
-            🏠 Home (Social Feed & Event Card) 
+            🏠 Home (Social Feed, Birthdays & Event) 
             ========================================== */}
         {activeTab === 'home' && (
           <div>
-            {/* Phase 5: Reunion Event Card */}
+            {/* Birthday Alert Box */}
+            {birthdayBoys.length > 0 && (
+              <div style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)', borderRadius: '16px', padding: '12px', marginBottom: '16px', color: '#fff', boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '30px' }}>🎂</span>
+                <div>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '14px', fontWeight: '900' }}>শুভ জন্মদিন!</h3>
+                  <p style={{ margin: 0, fontSize: '12px' }}>আজ আমাদের ব্যাচের বন্ধু <strong>{birthdayBoys.map(b => b.name).join(', ')}</strong>-এর জন্মদিন। চলুন শুভেচ্ছা জানাই!</p>
+                </div>
+              </div>
+            )}
+
+            {/* Reunion Event Card */}
             <div style={{ background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 100%)', borderRadius: '16px', padding: '16px', marginBottom: '16px', color: '#fff', boxShadow: '0 4px 12px rgba(10, 77, 46, 0.2)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
@@ -291,6 +349,7 @@ export default function App() {
                       </button>
                     </div>
 
+                    {/* Comments Section */}
                     {activeCommentsPostId === post.id && (
                       <div style={{ marginTop: '12px', background: '#F8FAFC', borderRadius: '10px', padding: '10px' }}>
                         <div style={{ maxHeight: '150px', overflowY: 'auto', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -305,6 +364,24 @@ export default function App() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ==========================================
+            👤 Profile (Birthday Setting)
+            ========================================== */}
+        {activeTab === 'profile' && userProfile && (
+          <div style={{ background: '#fff', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', padding: '16px' }}>
+            <h2 style={{ margin: '0 0 10px 0', fontSize: '20px', color: '#0F172A', fontWeight: '900' }}>{userProfile.name}</h2>
+            <p style={{ margin: '4px 0', fontSize: '13px', color: '#64748B' }}>এসএসসি ২০১৪ • 🏡 {userProfile.village}, {userProfile.area}</p>
+
+            <div style={{ marginTop: '16px', borderTop: '1px solid #E2E8F0', paddingTop: '16px' }}>
+              <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#137547' }}>আপনার জন্মতারিখ (বন্ধুরা শুভেচ্ছা জানাবে):</label>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                <input type="date" value={dobInput} onChange={e => setDobInput(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '13px', outline: 'none' }} />
+                <button onClick={handleUpdateDOB} style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '0 16px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>আপডেট</button>
+              </div>
             </div>
           </div>
         )}
@@ -378,16 +455,31 @@ export default function App() {
         </div>
       )}
 
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '360px' }}>
+            <h3 style={{ margin: '0 0 12px 0', color: '#0A4D2E' }}>লগইন করুন</h3>
+            <form onSubmit={authMode === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <input required type="tel" placeholder="মোবাইল নম্বর *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+              <input required type="password" placeholder="পাসওয়ার্ড *" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+              <button type="submit" style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>লগইন করুন</button>
+            </form>
+            <button onClick={() => setShowAuthModal(false)} style={{ marginTop: '10px', background: 'none', border: 'none', color: '#DC2626', width: '100%' }}>বাতিল</button>
+          </div>
+        </div>
+      )}
+
       {/* Admin Panel: Event Management */}
       {showAdmin && userProfile?.role === 'super_admin' && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
           <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '16px', width: '100%', maxWidth: '400px', maxHeight: '80vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>👑 ইভেন্ট ম্যানেজমেন্ট প্যানেল</h3>
+              <h3 style={{ margin: 0, color: '#0A4D2E', fontSize: '15px', fontWeight: '800' }}>👑 অ্যাডমিন প্যানেল</h3>
               <button onClick={() => setShowAdmin(false)} style={{ border: 'none', background: '#FEE2E2', color: '#DC2626', padding: '4px 8px', borderRadius: '6px' }}>✕</button>
             </div>
             
-            <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#0A4D2E' }}>নিবন্ধিত সদস্য ({eventRegs.length} জন):</h4>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#0A4D2E' }}>ইভেন্ট রেজিস্ট্রেশন ({eventRegs.length} জন):</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {eventRegs.map(r => (
                 <div key={r.id} style={{ background: '#F8FAFC', padding: '10px', borderRadius: '8px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -419,6 +511,11 @@ export default function App() {
         <button onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' && !privateChatRecipient ? '#0A4D2E' : '#94A3B8', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <span style={{ fontSize: '18px' }}>💬</span><span>আড্ডা</span>
         </button>
+        {userProfile?.status === 'approved' && (
+          <button onClick={() => setActiveTab('profile')} style={{ border: 'none', background: 'none', color: activeTab === 'profile' ? '#0A4D2E' : '#94A3B8', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <span style={{ fontSize: '18px' }}>👤</span><span>প্রোফাইল</span>
+          </button>
+        )}
         {userProfile?.role === 'super_admin' && (
           <button onClick={() => setShowAdmin(true)} style={{ border: 'none', background: 'none', color: '#D97706', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
             <span style={{ fontSize: '18px' }}>👑</span><span>অ্যাডমিন</span>
