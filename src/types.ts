@@ -10,7 +10,17 @@ export interface UserProfile {
   avatarUrl?: string;
   coverUrl?: string;
   bio?: string;
+  friendsCount?: number;
   createdAt: number;
+}
+
+export interface FriendRequest {
+  id: string; // Document ID = senderUid_receiverUid
+  senderUid: string;
+  senderName: string;
+  receiverUid: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  timestamp: number;
 }
 
 export interface PostItem {
