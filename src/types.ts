@@ -6,6 +6,10 @@ export interface UserProfile {
   area: string;
   village: string;
   role: 'super_admin' | 'member';
+  status: 'pending' | 'approved' | 'rejected' | 'suspended';
+  avatarUrl?: string;
+  coverUrl?: string;
+  bio?: string;
   createdAt: number;
 }
 
@@ -20,6 +24,14 @@ export interface PostItem {
   commentsCount: number;
   timestamp: number;
   dateStr: string;
+}
+
+export interface PostComment {
+  id: string;
+  authorName: string;
+  authorUid: string;
+  text: string;
+  timestamp: number;
 }
 
 export interface MemoryItem {
