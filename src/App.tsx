@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit, where } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
 import { db, auth } from "./firebase";
-import { UserProfile, PostItem, PostComment, StoryItem } from "./types";
+import { UserProfile, PostItem, PostComment, EventRegistration } from "./types";
 import ChatRoom from "./components/ChatRoom";
 
 export default function App() {
-  // ৭টি বটম ট্যাব: হোম, বন্ধু, স্মৃতি, গৌরব, বিদ্যালয়, কমিউনিটি, যোগাযোগ
-  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'directory' | 'chat'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'directory' | 'profile' | 'chat'>('home');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -23,27 +22,29 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // লাইভ টাইম ও কাউন্টার
-  const [currentTimeStr, setCurrentTimeStr] = useState('');
-  const [currentDateStr, setCurrentDateStr] = useState('');
-  const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
+  // চ্যাট
+  const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
 
-  // নিউজফিড ও চ্যাট স্টেট
+  // সোশ্যাল টাইমলাইন
   const [posts, setPosts] = useState<PostItem[]>([]);
-  const [stories, setStories] = useState<StoryItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
   const [commentsList, setCommentsList] = useState<PostComment[]>([]);
   const [commentInput, setCommentInput] = useState('');
+
+  // ডেটাবেস স্টেটস
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
-  const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
+  const [eventRegs, setEventRegs] = useState<EventRegistration[]>([]);
+  const [showEventRegModal, setShowEventRegModal] = useState(false);
+  const [eventGuestCount, setEventGuestCount] = useState(0);
+
+  // ইউটিলিটি
   const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+  const [currentDateStr, setCurrentDateStr] = useState('');
+  const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
 
-  WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
-  MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
-
-  // ফায়ারবেস লিসেনার
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -80,25 +81,32 @@ export default function App() {
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
 
-    // পোস্ট ও ইউজার সিঙ্ক
-    onSnapshot(query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20)), (snap) => {
+    const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20));
+    onSnapshot(qPosts, (snap) => {
       const list: PostItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
       setPosts(list);
     });
 
-    onSnapshot(collection(db, "users"), (snap) => {
+    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
       setAllUsers(list);
     });
 
-    return () => { unsubscribe(); clearInterval(interval); };
+    const unsubEvents = onSnapshot(collection(db, "event_registrations"), (snap) => {
+      const list: EventRegistration[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as EventRegistration));
+      setEventRegs(list);
+    });
+
+    return () => { unsubscribe(); clearInterval(interval); unsubUsers(); unsubEvents(); };
   }, []);
 
   useEffect(() => {
     if (!activeCommentsPostId) return;
-    const unsub = onSnapshot(query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc")), (snap) => {
+    const qComments = query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc"));
+    const unsub = onSnapshot(qComments, (snap) => {
       const list: PostComment[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostComment));
       setCommentsList(list);
@@ -119,6 +127,8 @@ export default function App() {
     const clean = authPhone.replace(/[^\d]/g, '');
     try {
       const userCred = await createUserWithEmailAndPassword(auth, phoneToEmail(clean), authPassword);
+      const isSuperAdmin = clean.includes('01705374798') || clean.includes('1705374798');
+      
       const newProfile: UserProfile = {
         uid: userCred.user.uid,
         name: authName.trim(),
@@ -126,8 +136,8 @@ export default function App() {
         tshirt: 'L',
         area: authArea.trim() || 'কেন্দুয়া',
         village: authVillage.trim() || 'সান্দিকোনা',
-        role: clean.includes('01705374798') ? 'super_admin' : 'member',
-        status: clean.includes('01705374798') ? 'approved' : 'pending',
+        role: isSuperAdmin ? 'super_admin' : 'member',
+        status: isSuperAdmin ? 'approved' : 'pending',
         createdAt: Date.now()
       };
       await setDoc(doc(db, "users", userCred.user.uid), newProfile);
@@ -142,6 +152,7 @@ export default function App() {
     e.preventDefault();
     if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
     if (!newPostText.trim()) return;
+
     setIsPosting(true);
     try {
       await addDoc(collection(db, "posts"), {
@@ -176,13 +187,24 @@ export default function App() {
     } catch (e) {}
   };
 
+  const handleDeletePost = async (postId: string, authorUid: string) => {
+    if (currentUser && (currentUser.uid === authorUid || userProfile?.role === 'super_admin')) {
+      if (window.confirm("পোস্টটি মুছে ফেলতে চান?")) await deleteDoc(doc(db, "posts", postId));
+    }
+  };
+
+  const startPrivateChat = (member: UserProfile) => {
+    if (!currentUser) { setShowAuthModal(true); return; }
+    setPrivateChatRecipient(member);
+    setActiveTab('chat');
+  };
+
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', backgroundColor: '#F0F2F5', minHeight: '100vh', paddingBottom: '90px', margin: 0, color: '#1C1E21' }}>
       
-      {/* 🌟 3. TOP HEADER (Modern Purple & Blue Gradient) */}
+      {/* 🌟 টপ হেডার (রেফারেন্স ইমেজ স্টাইল) */}
       <div style={{ background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)', color: '#fff', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 1000, boxShadow: '0 2px 10px rgba(0,0,0,0.15)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '20px', cursor: 'pointer' }}>☰</span>
           <div>
             <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '900' }}>সান্দিকোনা স্কুল এন্ড কলেজ</h3>
             <span style={{ fontSize: '10px', color: '#E9D5FF' }}>এস এস সি ব্যাচ ২০১৪</span>
@@ -190,10 +212,6 @@ export default function App() {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ position: 'relative', cursor: 'pointer' }}>
-            <span style={{ fontSize: '20px' }}>🔔</span>
-            <span style={{ position: 'absolute', top: '-4px', right: '-4px', background: '#EF4444', color: '#fff', fontSize: '9px', fontWeight: 'bold', padding: '1px 4px', borderRadius: '50%' }}>৩</span>
-          </div>
           <span style={{ fontSize: '20px', cursor: 'pointer' }} onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }}>💬</span>
           {currentUser && userProfile ? (
             <div onClick={() => setActiveTab('profile')} style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', cursor: 'pointer', border: '2px solid #fff' }}>
@@ -209,28 +227,15 @@ export default function App() {
         
         {activeTab === 'home' && (
           <div>
-            {/* 🏫 4. SCHOOL WELCOME BANNER (Inspired by reference image) */}
+            {/* 🏫 স্কুল ওয়েলকাম ব্যানার */}
             <div style={{ background: 'linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)', borderRadius: '16px', padding: '16px', color: '#fff', textAlign: 'center', marginBottom: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', border: '1px solid #7C3AED' }}>
-              <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: '#F59E0B', margin: '0 auto 8px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '26px', border: '2px solid #fff' }}>🎓</div>
               <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.2)', padding: '2px 10px', borderRadius: '10px', color: '#FEF08A', fontWeight: 'bold' }}>স্বাগতম</span>
               <h2 style={{ fontSize: '20px', margin: '6px 0 2px 0', fontWeight: '900' }}>এস এস সি ব্যাচ ২০১৪ কমিউনিটি</h2>
-              <p style={{ margin: '0 0 4px 0', fontSize: '12px', opacity: 0.9 }}>সান্দিকোনা স্কুল এন্ড কলেজ (এস এস সি ব্যাচ ২০১৪)</p>
+              <p style={{ margin: '0 0 4px 0', fontSize: '12px', opacity: 0.9 }}>সান্দিকোনা স্কুল এন্ড কলেজ</p>
               <span style={{ fontSize: '11px', color: '#E9D5FF' }}>📍 সান্দিকোনা, কেন্দুয়া, নেত্রকোনা।</span>
             </div>
 
-            {/* 📢 5. LIVE SCROLLING NOTICE */}
-            <div style={{ backgroundColor: '#fff', borderRadius: '12px', padding: '8px 12px', display: 'flex', alignItems: 'center', overflow: 'hidden', marginBottom: '12px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-              <span style={{ backgroundColor: '#7C3AED', color: '#FFFFFF', fontSize: '10px', fontWeight: '900', padding: '3px 8px', borderRadius: '6px', marginRight: '8px', flexShrink: 0 }}>
-                🔴 LIVE
-              </span>
-              <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
-                <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '12px', color: '#4B5563', fontWeight: '600' }}>
-                  {announcement} — বন্ধুত্বের বন্ধন অটুট থাকুক আজীবন।
-                </marquee>
-              </div>
-            </div>
-
-            {/* ⏳ 6. FRIENDSHIP LIVE COUNTER */}
+            {/* ⏳ ফ্রেন্ডশিপ লাইভ কাউন্টার */}
             <div style={{ background: 'linear-gradient(135deg, #1E3A8A 0%, #1E40AF 100%)', borderRadius: '16px', padding: '14px', marginBottom: '12px', color: '#fff', textAlign: 'center', boxShadow: '0 4px 12px rgba(30,58,138,0.2)' }}>
               <span style={{ fontSize: '11px', color: '#93C5FD', fontWeight: 'bold', display: 'block', marginBottom: '6px' }}>
                 🎓 এস এস সি ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়
@@ -245,14 +250,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* ✍️ 7. POST COMPOSER */}
+            {/* ✍️ পোস্ট কম্পোজার */}
             <div style={{ background: '#fff', borderRadius: '16px', padding: '12px', marginBottom: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', border: '1px solid #E4E6EB' }}>
               <form onSubmit={handleCreatePost}>
                 <textarea rows={2} placeholder={currentUser ? (userProfile?.name + ", কিছু লিখুন, ছবি দিন...") : "পোস্ট করতে লগইন করুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} disabled={!currentUser} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#F0F2F5' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-                  <div style={{ display: 'flex', gap: '10px', fontSize: '11px', color: '#65676B', fontWeight: 'bold' }}>
-                    <span>🖼️ ছবি</span> <span>📹 ভিডিও</span> <span>😊 অনুভূতি</span>
-                  </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
                   <button type="submit" disabled={isPosting || !currentUser} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '7px 18px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>
                     {isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন'}
                   </button>
@@ -260,7 +262,7 @@ export default function App() {
               </form>
             </div>
 
-            {/* 📰 8. NEWS FEED */}
+            {/* 📰 নিউজ ফিড */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {posts.map(post => {
                 const isLiked = currentUser && post.likes.includes(currentUser.uid);
@@ -275,7 +277,7 @@ export default function App() {
                         </div>
                       </div>
                       {(currentUser?.uid === post.authorUid || userProfile?.role === 'super_admin') && (
-                        <button onClick={() => deleteDoc(doc(db, "posts", post.id))} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '14px', cursor: 'pointer' }}>🗑️</button>
+                        <button onClick={() => handleDeletePost(post.id, post.authorUid)} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '14px', cursor: 'pointer' }}>🗑️</button>
                       )}
                     </div>
                     
@@ -300,7 +302,7 @@ export default function App() {
                         <div style={{ maxHeight: '140px', overflowY: 'auto', marginBottom: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           {commentsList.map(c => <div key={c.id} style={{ background: '#fff', padding: '6px 10px', borderRadius: '8px', fontSize: '11px' }}><strong style={{ color: '#581C87' }}>{c.authorName}: </strong>{c.text}</div>)}
                         </div>
-                        <form onSubmit={(e) => AddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
+                        <form onSubmit={(e) => handleAddComment(e, post.id)} style={{ display: 'flex', gap: '6px' }}>
                           <input type="text" placeholder="মন্তব্য লিখুন..." value={commentInput} onChange={e => setCommentInput(e.target.value)} style={{ flex: 1, padding: '7px 12px', borderRadius: '20px', border: '1px solid #CCD0D5', fontSize: '11px', outline: 'none' }} />
                           <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>পাঠান</button>
                         </form>
@@ -313,8 +315,38 @@ export default function App() {
           </div>
         )}
 
+        {/* Directory */}
+        {activeTab === 'directory' && (
+          <div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#581C87', fontWeight: 'bold' }}>👥 সহপাঠী ডিরেক্টরি</h3>
+            <input type="text" placeholder="নাম দিয়ে খুঁজুন..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid #CBD5E1', marginBottom: '12px', boxSizing: 'border-box' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {allUsers.filter(u => u.status === 'approved' && u.name.includes(searchQuery)).map(m => (
+                <div key={m.uid} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A' }}>{m.name}</h4>
+                    <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>🏡 {m.village} • জার্সি: {m.tshirt}</p>
+                  </div>
+                  {m.uid !== currentUser?.uid && (
+                    <button onClick={() => { setPrivateChatRecipient(m); setActiveTab('chat'); }} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                      💬 মেসেজ
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Chat Engine */}
         {activeTab === 'chat' && (
-          <ChatRoom currentUser={currentUser} userProfile={userProfile} onOpenAuth={() => setShowAuthModal(true)} />
+          <ChatRoom 
+            currentUser={currentUser} 
+            userProfile={userProfile} 
+            recipientUser={privateChatRecipient} 
+            onBack={() => { setPrivateChatRecipient(null); setActiveTab('directory'); }}
+            onOpenAuth={() => setShowAuthModal(true)} 
+          />
         )}
       </main>
 
@@ -330,17 +362,23 @@ export default function App() {
                   <input required type="text" placeholder="নিজ গ্রাম *" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
                 </>
               )}
-              <input required type="tel" placeholder="মোবাইল নম্বর (017XXXXXXXX) *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+              <input required type="tel" placeholder="মোবাইল নম্বর *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
               <input required type="password" placeholder="পাসওয়ার্ড *" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
               <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন সম্পন্ন করুন'}</button>
             </form>
+            <div style={{ marginTop: '10px', textAlign: 'center' }}>
+              {authMode === 'login' ? 
+                <button onClick={() => setAuthMode('signup')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>নতুন অ্যাকাউন্ট খুলুন</button> : 
+                <button onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>সরাসরি লগইন করুন</button>
+              }
+            </div>
             <button onClick={() => setShowAuthModal(false)} style={{ marginTop: '10px', background: 'none', border: 'none', color: '#DC2626', width: '100%', cursor: 'pointer' }}>বাতিল</button>
           </div>
         </div>
       )}
 
-      {/* 🧭 9. FIXED BOTTOM NAVIGATION BAR (7 Buttons exactly as specified) */}
-      <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E4E6EB', display: 'flex', justifyContent: 'space-around', padding: '6px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
+      {/* 🧭 9. FIXED BOTTOM NAVIGATION BAR */}
+      <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E4E6EB', display: 'flex', justifyContent: 'space-around', padding: '8px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
         <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#7C3AED' : '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🏠</span><span>হোম</span>
         </button>
@@ -350,16 +388,16 @@ export default function App() {
         <button onClick={() => alert('স্মৃতি সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>📸</span><span>স্মৃতি</span>
         </button>
-        <button onClick={() => alert('গৌরব সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' =>
+        <button onClick={() => alert('গৌরব সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🏆</span><span>গৌরব</span>
         </button>
         <button onClick={() => alert('বিদ্যালয় সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🏫</span><span>বিদ্যালয়</span>
         </button>
-        <button onClick={() => { setActiveTab('chat'); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#7C3AED' : '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' && !privateChatRecipient ? '#7C3AED' : '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🌐</span><span>কমিউনিটি</span>
         </button>
-        <button onClick={() => alert('যোগাযোগ সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => alert('যোগাযোগ সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '10px', fontWeight: 'grey', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>📞</span><span>যোগাযোগ</span>
         </button>
       </nav>
