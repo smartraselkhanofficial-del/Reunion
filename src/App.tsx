@@ -449,3 +449,43 @@ export default function App() {
     </div>
   );
 }
+import React, { useState, useEffect } from 'react';
+import { onAuthStateChanged } from "firebase/auth";
+import { auth } from "./firebase";
+import { 
+  // আপনার বিদ্যমান অন্যান্য ইমপোর্ট...
+} from "firebase/firestore";
+
+export default function App() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // Auth লিসেনার (অ্যাপ খোলার সাথে সাথে চেক)
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  if (isAuthLoading) {
+    return <div style={{textAlign: 'center', marginTop: '50%'}}>Loading...</div>; // আপনি চাইলে প্রিমিয়াম স্প্ল্যাশ স্ক্রিন দিন
+  }
+
+  // যদি লগইন করা না থাকে, তবে শুধু Login/Signup স্ক্রিন দেখাবে
+  if (!currentUser) {
+    return <AuthScreen />;
+  }
+
+  // যদি লগইন করা থাকে, তবেই মেইন অ্যাপ দেখাবে
+  return <MainApplication />;
+}
+
+// আপনার বর্তমান হোমপেজ ও অন্যান্য ফিচারগুলো MainApplication কম্পোনেন্টে থাকবে
+function MainApplication() {
+  // আপনার বিদ্যমান অ্যাপের সব ডিজাইন, নেভিগেশন ও লজিক এখানে থাকবে
+  return (
+    // ... আপনার বর্তমান হোমপেজ কোড
+  );
+}
