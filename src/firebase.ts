@@ -14,3 +14,15 @@ export const firebaseConfig = {
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+
+const firebaseConfig = { /* আপনার বর্তমান কনফিগারেশন */ };
+
+export const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app);
+export const auth = getAuth(app);
+
+// সেশন স্থায়ী করার নির্দেশ
+setPersistence(auth, browserLocalPersistence);
