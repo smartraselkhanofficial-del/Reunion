@@ -1,3 +1,10 @@
+export interface PrivacySettings {
+  showPhone: boolean;
+  showDob: boolean;
+  profileVisible: boolean;
+  showProfession: boolean;
+}
+
 export interface UserProfile {
   uid: string;
   fullName: string;
@@ -6,7 +13,7 @@ export interface UserProfile {
   profileImage?: string;
   coverImage?: string;
   schoolName: string;
-  batchYear: string; // '2014'
+  batchYear: string;
   dateOfBirth: string;
   gender: string;
   profession: string;
@@ -18,12 +25,7 @@ export interface UserProfile {
   profileCompleted: boolean;
   accountStatus: 'pending' | 'approved' | 'suspended';
   role: 'super_admin' | 'member';
-  privacySettings: {
-    showPhone: boolean;
-    showDob: boolean;
-    profileVisible: boolean;
-    showProfession: boolean;
-  };
+  privacySettings: PrivacySettings;
   createdAt: number;
   updatedAt: number;
 }
@@ -47,13 +49,4 @@ export interface PostComment {
   authorUid: string;
   text: string;
   timestamp: number;
-}
-
-export interface ChatMsg {
-  id: string;
-  sender: string;
-  senderUid?: string;
-  text?: string;
-  timestamp: number;
-  time: string;
 }
