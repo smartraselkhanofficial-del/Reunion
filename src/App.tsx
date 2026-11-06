@@ -1,97 +1,237 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, sendPasswordResetEmail, User } from "firebase/auth";
+import { collection, addDoc, onSnapshot, doc, setDoc, getDoc, deleteDoc, query, orderBy, limit, where } from "firebase/firestore";
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
 import { db, auth } from "./firebase";
-import { UserProfile, PostItem, PostComment } from "./types";
+import { UserProfile, PostItem, PostComment, MemoryItem, BatchPrideItem, TeacherItem, FriendRequest, EventRegistration } from "./types";
+import ChatRoom from "./components/ChatRoom";
+import ReunionPoll from "./components/ReunionPoll";
 
 export default function App() {
-  // অ্যাপ স্টেজ: 'splash' | 'welcome' | 'login' | 'signup' | 'complete_profile' | 'main'
-  const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'complete_profile' | 'main'>('splash');
-  const [activeTab, setActiveTab] = useState<'home' | 'directory' | 'profile' | 'chat'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'memories' | 'pride' | 'directory' | 'chat' | 'school' | 'friends' | 'profile'>('home');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [friendsSubTab, setFriendsSubTab] = useState<'all' | 'requests'>('all');
 
-  // ফায়ারবেস ইউজার ও প্রোফাইল
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
 
-  // ফর্ম স্টেটস
-  const [emailInput, setEmailInput] = useState('');
-  const [phoneInput, setPhoneInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [confirmPasswordInput, setConfirmPasswordInput] = useState('');
-  const [fullNameInput, setFullNameInput] = useState('');
-  const [dobInput, setDobInput] = useState('');
-  const [genderInput, setGenderInput] = useState('পুরুষ');
-  const [professionInput, setProfessionInput] = useState('');
-  const [locationInput, setLocationInput] = useState('');
-  const [bioInput, setBioInput] = useState('');
-  const [whatsappInput, setWhatsappInput] = useState('');
-  const [facebookInput, setFacebookInput] = useState('');
-  const [avatarPreview, setAvatarPreview] = useState<string>('');
-
+  const [authPhone, setAuthPhone] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authName, setAuthName] = useState('');
+  const [authVillage, setAuthVillage] = useState('');
+  const [authArea, setAuthArea] = useState('');
+  const [authTshirt, setAuthTshirt] = useState('L');
   const [authError, setAuthError] = useState('');
   const [authSubmitting, setAuthSubmitting] = useState(false);
 
-  // সোশ্যাল ফিড স্টেটস
+  // চ্যাট ও ইনবক্স
+  const [privateChatRecipient, setPrivateChatRecipient] = useState<UserProfile | null>(null);
+
+  // সোশ্যাল টাইমলাইন ও নিউজফিড
   const [posts, setPosts] = useState<PostItem[]>([]);
   const [newPostText, setNewPostText] = useState('');
-  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [isPosting, setIsPosting] = useState(false);
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<string | null>(null);
   const [commentsList, setCommentsList] = useState<PostComment[]>([]);
   const [commentInput, setCommentInput] = useState('');
 
-  // 1. Splash Screen & Persistent Session Check (Phase 1 & 7)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const unsubscribe = onAuthStateChanged(auth, async (user) => {
-        setCurrentUser(user);
-        if (user) {
-          try {
-            const docSnap = await getDoc(doc(db, "users", user.uid));
-            if (docSnap.exists()) {
-              const profile = docSnap.data() as UserProfile;
-              setUserProfile(profile);
-              if (profile.profileCompleted) {
-                setAppStage('main');
-              } else {
-                setAppStage('complete_profile');
-              }
-            } else {
-              setAppStage('complete_profile');
-            }
-          } catch (e) {
-            setAppStage('welcome');
+  // ডেটাবেস স্টেটস
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [prideList, setPrideList] = useState<BatchPrideItem[]>([]);
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [myFriends, setMyFriends] = useState<string[]>([]);
+  const [eventRegs, setEventRegs] = useState<EventRegistration[]>([]);
+
+  // সেটিংস ও ইউটিলিটি
+  const [announcement, setAnnouncement] = useState('স্বাগতম এস এস সি ব্যাচ ২০১৪ কমিউনিটিতে। সবাই বন্ধুদের আমন্ত্রণ জানান এবং যুক্ত থাকুন।');
+  const [schoolHistory, setSchoolHistory] = useState('ঐতিহ্যবাহী সান্দিকোনা স্কুল এন্ড কলেজ নেত্রকোনা জেলার কেন্দুয়া উপজেলার একটি স্বনামধন্য বিদ্যাপীঠ।');
+  const [apkDownloadUrl, setApkDownloadUrl] = useState('https://github.com');
+  const [headerBgUrl, setHeaderBgUrl] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
+
+  // ঘড়ি ও কাউন্টার
+  const [currentTimeStr, setCurrentTimeStr] = useState('');
+  const [currentDateStr, setCurrentDateStr] = useState('');
+  const [batchTimeElapsed, setBatchTimeElapsed] = useState({ years: 0, months: 0, days: 0, hours: 0, minutes: 0, seconds: 0 });
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+
+  // নোটিফিকেশন ও অ্যাডমিন
+  const [activeToast, setActiveToast] = useState<{ title: string; body: string; icon: string } | null>(null);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [newNoticeInput, setNewNoticeInput] = useState('');
+  const [newHistoryInput, setNewHistoryInput] = useState('');
+  const [newApkUrlInput, setNewApkUrlInput] = useState('');
+  const [adminBroadcastTitle, setAdminBroadcastTitle] = useState('');
+  const [adminBroadcastMsg, setAdminBroadcastMsg] = useState('');
+  const [isSendingBroadcast, setIsSendingBroadcast] = useState(false);
+
+  // মডাল স্টেটস
+  const [showMemoryUploadModal, setShowMemoryUploadModal] = useState(false);
+  const [memCaption, setMemCaption] = useState('');
+  const [selectedMemFile, setSelectedMemFile] = useState<File | null>(null);
+  const [memUploadProgress, setMemUploadProgress] = useState<string | null>(null);
+
+  const [showAddPrideModal, setShowAddPrideModal] = useState(false);
+  const [prideName, setPrideName] = useState('');
+  const [prideProfession, setPrideProfession] = useState('');
+  const [prideOrg, setPrideOrg] = useState('');
+  const [prideVillage, setPrideVillage] = useState('');
+  const [prideFullAddress, setPrideFullAddress] = useState('');
+  const [prideDetails, setPrideDetails] = useState('');
+  const [pridePhone, setPridePhone] = useState('');
+
+  const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
+  const [teachName, setTeachName] = useState('');
+  const [teachSubject, setTeachSubject] = useState('');
+  const [teachDesig, setTeachDesig] = useState('');
+  const [teachPhone, setTeachPhone] = useState('');
+
+  const [showEventRegModal, setShowEventRegModal] = useState(false);
+  const [eventGuestCount, setEventGuestCount] = useState(0);
+
+  const bgFileInputRef = useRef<HTMLInputElement>(null);
+
+  WHATSAPP_GROUP_URL = "https://chat.whatsapp.com/GPwXRoWdZ748lL5182iBCj?s=cl&p=a&mlu=4&ilr=4&iam=2";
+  MESSENGER_GROUP_URL = "https://m.me/j/EHb16biwgroNmlDh/?send_source=gc%3Acopy_invite_link_t";
+
+  // 100% সুরক্ষিত ও ফ্রি ইমেজ কম্প্রেশন (যেকোনো সাইজের ছবি ক্র্যাশ ছাড়াই সেভ হবে)
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const maxDim = 800;
+          let width = img.width;
+          let height = img.height;
+          if (width > height && width > maxDim) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
           }
-        } else {
-          setAppStage('welcome');
-        }
-      });
-      return () => unsubscribe();
-    }, 2000); // 2 seconds splash animation
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.5)); // ৪-৫ এমবি ছবিকে মাত্র ৫০-৬০ কিলোবাইটে রূপান্তর
+        };
+      };
+    });
+  };
 
-    return () => clearTimeout(timer);
-  }, []);
-
-  // ডাটাবেস লিসেনার (जब ইউজার মেইন অ্যাপে থাকে)
+  // ফায়ারবেস Auth ও ডেটা লিসেনার
   useEffect(() => {
-    if (appStage !== 'main') return;
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (user) {
+        onSnapshot(doc(db, "users", user.uid), (docSnap) => {
+          if (docSnap.exists()) setUserProfile(docSnap.data() as UserProfile);
+        });
 
-    const qPosts = query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20));
-    onSnapshot(qPosts, (snap) => {
+        // ফ্রেন্ড রিকোয়েস্ট ও বন্ধু লিস্ট
+        onSnapshot(query(collection(db, "friend_requests"), where("receiverUid", "==", user.uid)), (snap) => {
+          const list: FriendRequest[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as FriendRequest));
+          setFriendRequests(list);
+        });
+
+        onSnapshot(query(collection(db, "friend_requests"), where("status", "==", "accepted")), (snap) => {
+          const friends: string[] = [];
+          snap.forEach(d => {
+            const req = d.data() as FriendRequest;
+            if (req.senderUid === user.uid) friends.push(req.receiverUid);
+            else if (req.receiverUid === user.uid) friends.push(req.senderUid);
+          });
+          setMyFriends(friends);
+        });
+      } else {
+        setUserProfile(null);
+        setFriendRequests([]);
+        setMyFriends([]);
+      }
+    });
+
+    // রানিং ঘড়ি ও ২০১৪ থেকে সময় গণনা
+    const sscDate = new Date('2014-05-17T00:00:00');
+    const updateTimer = () => {
+      const now = new Date();
+      setCurrentTimeStr(now.toLocaleTimeString('bn-BD', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setCurrentDateStr(now.toLocaleDateString('bn-BD', { timeZone: 'Asia/Dhaka', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+
+      let years = now.getFullYear() - sscDate.getFullYear();
+      let months = now.getMonth() - sscDate.getMonth();
+      let days = now.getDate() - sscDate.getDate();
+      let hours = now.getHours() - sscDate.getHours();
+      let minutes = now.getMinutes() - sscDate.getMinutes();
+      let seconds = now.getSeconds() - sscDate.getSeconds();
+
+      if (seconds < 0) { seconds += 60; minutes--; }
+      if (minutes < 0) { minutes += 60; hours--; }
+      if (hours < 0) { hours += 24; days--; }
+      if (days < 0) { days += 30; months--; }
+      if (months < 0) { months += 12; years--; }
+      setBatchTimeElapsed({ years, months, days, hours, minutes, seconds });
+    };
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+
+    onSnapshot(query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20)), (snap) => {
       const list: PostItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
       setPosts(list);
     });
 
-    const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
+    onSnapshot(query(collection(db, "memories"), orderBy("timestamp", "desc")), (snap) => {
+      const list: MemoryItem[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as MemoryItem));
+      setMemories(list);
+    });
+
+    onSnapshot(collection(db, "batch_pride"), (snap) => {
+      const list: BatchPrideItem[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as BatchPrideItem));
+      setPrideList(list);
+    });
+
+    onSnapshot(collection(db, "teachers"), (snap) => {
+      const list: TeacherItem[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as TeacherItem));
+      setTeachers(list);
+    });
+
+    onSnapshot(collection(db, "users"), (snap) => {
       const list: UserProfile[] = [];
       snap.forEach(d => list.push(d.data() as UserProfile));
       setAllUsers(list);
     });
 
-    return () => { unsubUsers(); };
-  }, [appStage]);
+    onSnapshot(collection(db, "event_registrations"), (snap) => {
+      const list: EventRegistration[] = [];
+      snap.forEach(d => list.push({ id: d.id, ...d.data() } as EventRegistration));
+      setEventRegs(list);
+    });
 
-  // কমেন্ট লিসেনার
+    onSnapshot(doc(db, "settings", "app_config"), (d) => {
+      if (d.exists()) {
+        const data = d.data();
+        if (data?.announcement) setAnnouncement(data.announcement);
+        if (data?.schoolHistory) setSchoolHistory(data.schoolHistory);
+        if (data?.apkUrl) setApkDownloadUrl(data.apkUrl);
+        if (data?.headerBg) setHeaderBgUrl(data.headerBg);
+      }
+    });
+
+    return () => { unsubscribe(); clearInterval(interval); };
+  }, []);
+
   useEffect(() => {
     if (!activeCommentsPostId) return;
     const unsub = onSnapshot(query(collection(db, "posts", activeCommentsPostId, "comments"), orderBy("timestamp", "asc")), (snap) => {
@@ -102,133 +242,51 @@ export default function App() {
     return () => unsub();
   }, [activeCommentsPostId]);
 
-  // 3. Login Handler (Phase 3)
+  const phoneToEmail = (rawPhone: string) => rawPhone.replace(/[^\d]/g, '') + "@sandikona2014.org";
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError('');
-    setAuthSubmitting(true);
-    try {
-      const userCred = await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
-      const docSnap = await getDoc(doc(db, "users", userCred.user.uid));
-      if (docSnap.exists() && docSnap.data().profileCompleted) {
-        setAppStage('main');
-      } else {
-        setAppStage('complete_profile');
-      }
-    } catch (err: any) {
-      setAuthError('ভুল ইমেইল বা পাসওয়ার্ড। দয়া করে আবার চেষ্টা করুন।');
-    } finally {
-      setAuthSubmitting(false);
-    }
+    try { await signInWithEmailAndPassword(auth, phoneToEmail(authPhone), authPassword); setShowAuthModal(false); } 
+    catch (err) { alert('ভুল মোবাইল নম্বর বা পাসওয়ার্ড।'); }
   };
 
-  // 4. Sign Up Step 1 (Phase 4)
-  const handleSignUpStep1 = async (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError('');
-    if (passwordInput !== confirmPasswordInput) {
-      setAuthError('পাসওয়ার্ড দুটি মিলছে না।');
-      return;
-    }
-    if (passwordInput.length < 6) {
-      setAuthError('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
-      return;
-    }
-
-    setAuthSubmitting(true);
+    const clean = authPhone.replace(/[^\d]/g, '');
     try {
-      const userCred = await createUserWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
-      const isSuperAdmin = phoneInput.includes('01705374798') || phoneInput.includes('1705374798');
-
-      // প্রাথমিক ডিরেক্টরি ডকুমেন্ট তৈরি
-      const tempProfile: UserProfile = {
+      const userCred = await createUserWithEmailAndPassword(auth, phoneToEmail(clean), authPassword);
+      const isSuperAdmin = clean.includes('01705374798') || clean.includes('1705374798');
+      
+      const newProfile: UserProfile = {
         uid: userCred.user.uid,
-        fullName: fullNameInput.trim() || 'সহপাঠী',
-        email: emailInput.trim(),
-        phoneNumber: phoneInput.trim(),
-        schoolName: 'সান্দিকোনা স্কুল এন্ড কলেজ',
-        batchYear: '2014',
-        dateOfBirth: '',
-        gender: 'পুরুষ',
-        profession: '',
-        currentLocation: 'কেন্দুয়া, নেত্রকোনা',
-        bio: '',
-        profileCompleted: false,
-        accountStatus: 'approved',
+        name: authName.trim(),
+        phone: clean,
+        tshirt: 'L',
+        area: 'কেন্দুয়া',
+        village: authVillage.trim() || 'সান্দিকোনা',
         role: isSuperAdmin ? 'super_admin' : 'member',
-        privacySettings: { showPhone: false, showDob: false, profileVisible: true, showProfession: true },
-        createdAt: Date.now(),
-        updatedAt: Date.now()
+        status: isSuperAdmin ? 'approved' : 'pending',
+        createdAt: Date.now()
       };
-
-      await setDoc(doc(db, "users", userCred.user.uid), tempProfile);
-      setUserProfile(tempProfile);
-      setAppStage('complete_profile');
-    } catch (err: any) {
-      setAuthError(err.message || 'নিবন্ধনে সমস্যা হয়েছে।');
-    } finally {
-      setAuthSubmitting(false);
-    }
+      await setDoc(doc(db, "users", userCred.user.uid), newProfile);
+      setShowAuthModal(false);
+      alert('নিবন্ধন সফল হয়েছে! অ্যাডমিন অনুমোদনের পর সম্পূর্ণ অ্যাক্সেস পাবেন।');
+    } catch (e) { alert('নিবন্ধনে সমস্যা হয়েছে।'); }
   };
 
-  // 5. Complete Profile Step 2-4 (Phase 4 & 5)
-  const handleCompleteProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser) return;
-    setAuthSubmitting(true);
+  const handleLogout = async () => { if (window.confirm("লগআউট করতে চান?")) { await signOut(auth); setActiveTab('home'); } };
 
-    try {
-      const updatedProfile: UserProfile = {
-        ...userProfile!,
-        fullName: fullNameInput.trim() || userProfile!.fullName,
-        dateOfBirth: dobInput,
-        gender: genderInput,
-        profession: professionInput.trim(),
-        currentLocation: locationInput.trim() || 'কেন্দুয়া, নেত্রকোনা',
-        whatsappNumber: whatsappInput.trim(),
-        facebookUrl: facebookInput.trim(),
-        bio: bioInput.trim(),
-        profileImage: avatarPreview || '',
-        profileCompleted: true,
-        updatedAt: Date.now()
-      };
-
-      await setDoc(doc(db, "users", currentUser.uid), updatedProfile, { merge: true });
-      setUserProfile(updatedProfile);
-      setAppStage('main');
-    } catch (err) {
-      alert('প্রোফাইল সেভ করতে সমস্যা হয়েছে।');
-    } finally {
-      setAuthSubmitting(false);
-    }
-  };
-
-  // Image Upload handler (Phase 4)
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAvatarPreview(reader.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleLogout = async () => {
-    if (window.confirm("লগআউট করতে চান?")) {
-      await signOut(auth);
-      setAppStage('welcome');
-    }
-  };
-
+  // পোস্ট ও স্মৃতি হ্যান্ডলার
   const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser || !userProfile || !newPostText.trim()) return;
+    if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
+    if (!newPostText.trim()) return;
+
     try {
       await addDoc(collection(db, "posts"), {
         authorUid: currentUser.uid,
-        authorName: userProfile.fullName,
-        authorVillage: userProfile.currentLocation,
+        authorName: userProfile.name,
+        authorVillage: userProfile.village,
         content: newPostText.trim(),
         likes: [],
         commentsCount: 0,
@@ -236,187 +294,106 @@ export default function App() {
         dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
       });
       setNewPostText('');
+      alert('পোস্ট সফলভাবে প্রকাশিত হয়েছে!');
     } catch (e) {}
   };
 
   const handleToggleLike = async (post: PostItem) => {
-    if (!currentUser) return;
+    if (!currentUser) { setShowAuthModal(true); return; }
     const isLiked = post.likes.includes(currentUser.uid);
-    const updatedLikes = isLiked ? post.likes.filter(id => id !== currentUser.uid) : [...post.likes, currentUser.uid];
-    await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
+    const updatedLikes = isLiked ? post.likes.filter(uid => uid !== currentUser.uid) : [...post.likes, currentUser.uid];
+    try { await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true }); } catch (e) {}
   };
 
-  // ==========================================
-  // RENDER UI BASED ON APP STAGE
-  // ==========================================
+  const handleAddComment = async (e: React.FormEvent, postId: string) => {
+    e.preventDefault();
+    if (!currentUser || !userProfile || !commentInput.trim()) return;
+    try {
+      await addDoc(collection(db, "posts", postId, "comments"), { authorName: userProfile.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
+      const target = posts.find(p => p.id === postId);
+      if (target) await setDoc(doc(db, "posts", postId), { commentsCount: (target.commentsCount || 0) + 1 }, { merge: true });
+      setCommentInput('');
+    } catch (e) {}
+  };
 
-  // PHASE 1: SPLASH SCREEN
-  if (appStage === 'splash') {
+  const handleDeletePost = async (postId: string, authorUid: string) => {
+    if (currentUser && (currentUser.uid === authorUid || userProfile?.role === 'super_admin')) {
+      if (window.confirm("পোস্টটি মুছে ফেলতে চান?")) await deleteDoc(doc(db, "posts", postId));
+    }
+  };
+
+  const handleUploadMemoryFree = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !userProfile) { setShowAuthModal(true); return; }
+    if (!selectedMemFile) return;
+
+    setMemUploadProgress('ছবি অপ্টিমাইজ হচ্ছে...');
+    try {
+      const compressedUrl = await compressImage(selectedMemFile);
+      await addDoc(collection(db, "memories"), {
+        uploader: userProfile.name,
+        caption: memCaption.trim() || 'স্কুল জীবনের স্মৃতি',
+        mediaUrl: compressedUrl,
+        mediaType: 'image',
+        timestamp: Date.now()
+      });
+      setMemUploadProgress(null);
+      setShowMemoryUploadModal(false);
+      setSelectedMemFile(null);
+      setMemCaption('');
+      alert('স্মৃতি সফলভাবে আপলোড হয়েছে!');
+    } catch (err) {
+      alert('আপলোড ত্রুটি হয়েছে।');
+      setMemUploadProgress(null);
+    }
+  };
+
+  const handleHeaderBgUploadFree = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressedBg = await compressImage(file);
+      setHeaderBgUrl(compressedBg);
+      await setDoc(doc(db, "settings", "app_config"), { headerBg: compressedBg }, { merge: true });
+      alert('হেডার ব্যাকগ্রাউন্ড আপডেট হয়েছে!');
+    } catch (e) {}
+  };
+
+  const triggerNativeNotification = (title: string, body: string, icon = '🔔') => {
+    setActiveToast({ title, body, icon });
+    setTimeout(() => setActiveToast(null), 4000);
+  };
+
+  const hasRegisteredForEvent = currentUser ? eventRegs.some(r => r.uid === currentUser.uid) : false;
+  const myEventReg = currentUser ? eventRegs.find(r => r.uid === currentUser.uid) : null;
+
+  // Pending Screen Check
+  const isPending = userProfile && userProfile.status === 'pending' && userProfile.role !== 'super_admin';
+
+  if (isPending) {
     return (
-      <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '20px' }}>
-        <div style={{ width: '90px', height: '90px', borderRadius: '50%', background: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '40px', marginBottom: '20px', boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>🎓</div>
-        <h1 style={{ fontSize: '24px', fontWeight: '900', margin: '0 0 8px 0' }}>SSC Batch 2014 Community</h1>
-        <h2 style={{ fontSize: '18px', fontWeight: '800', color: '#FEF08A', margin: '0 0 4px 0' }}>সান্দিকোনা স্কুল এন্ড কলেজ</h2>
-        <p style={{ fontSize: '14px', margin: '0 0 20px 0', opacity: 0.9 }}>এস এস সি ব্যাচ ২০১৪</p>
-        <p style={{ fontSize: '12px', opacity: 0.7 }}>সান্দিকোনা, কেন্দুয়া, নেত্রকোনা।</p>
-        <div style={{ marginTop: '30px', width: '30px', height: '30px', border: '3px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
-  // PHASE 2: WELCOME SCREEN
-  if (appStage === 'welcome') {
-    return (
-      <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)', color: '#fff', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '40px 20px', textAlign: 'center' }}>
-        <div>
-          <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#F59E0B', margin: '0 auto 16px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '36px', boxShadow: '0 6px 20px rgba(0,0,0,0.2)' }}>🎓</div>
-          <h1 style={{ fontSize: '24px', fontWeight: '900', margin: '0 0 6px 0' }}>SSC Batch 2014 Community</h1>
-          <h3 style={{ fontSize: '16px', color: '#FEF08A', margin: '0 0 4px 0', fontWeight: '800' }}>সান্দিকোনা স্কুল এন্ড কলেজ</h3>
-          <p style={{ fontSize: '13px', margin: 0, opacity: 0.9 }}>এস এস সি ব্যাচ ২০১৪ • সান্দিকোনা, কেন্দুয়া, নেত্রকোনা</p>
-        </div>
-
-        <div style={{ width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <button onClick={() => setAppStage('signup')} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '14px', borderRadius: '12px', fontSize: '15px', fontWeight: '900', cursor: 'pointer', boxShadow: '0 4px 12px rgba(16,185,129,0.3)' }}>
-            নতুন অ্যাকাউন্ট তৈরি করুন (Sign Up)
-          </button>
-          <button onClick={() => setAppStage('login')} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)', padding: '14px', borderRadius: '12px', fontSize: '15px', fontWeight: '900', cursor: 'pointer' }}>
-            আগে থেকেই অ্যাকাউন্ট আছে (Login)
-          </button>
-        </div>
-
-        <div style={{ fontSize: '11px', opacity: '0.6' }}>বন্ধুত্বের বন্ধন অটুট থাকুক আজীবন।</div>
-      </div>
-    );
-  }
-
-  // PHASE 3: LOGIN SCREEN
-  if (appStage === 'login') {
-    return (
-      <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-        <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '100%', maxWidth: '385px', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ color: '#581C87', margin: '0 0 6px 0', fontSize: '20px', fontWeight: '900' }}>স্বাগতম ফিরে আসায়!</h2>
-          <p style={{ color: '#65676B', fontSize: '12px', margin: '0 0 18px 0' }}>আপনার ইমেইল বা ফোন নম্বর দিয়ে লগইন করুন।</p>
-          
-          {authError && <div style={{ background: '#FEF2F2', color: '#B91C1C', padding: '10px', borderRadius: '8px', fontSize: '11px', marginBottom: '12px' }}>{authError}</div>}
-
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <input required type="text" placeholder="ইমেইল অথবা মোবাইল নম্বর" value={emailInput} onChange={e => setEmailInput(e.target.value)} style={{ padding: '12px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px', outline: 'none' }} />
-            <input required type="password" placeholder="পাসওয়ার্ড" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} style={{ padding: '12px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px', outline: 'none' }} />
-            <button type="submit" disabled={authSubmitting} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', marginTop: '6px' }}>
-              {authSubmitting ? 'লগইন হচ্ছে...' : 'লগইন করুন'}
-            </button>
-          </form>
-
-          <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '12px' }}>
-            <button onClick={() => setAppStage('signup')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>নতুন অ্যাকাউন্ট নেই? সাইন আপ করুন</button>
-            <br/><br/>
-            <button onClick={() => setAppStage('welcome')} style={{ background: 'none', border: 'none', color: '#65676B', cursor: 'pointer' }}>← ফিরে যান</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // PHASE 4: SIGN UP (Step 1)
-  if (appStage === 'signup') {
-    return (
-      <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-        <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '100%', maxWidth: '385px', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ color: '#581C87', margin: '0 0 6px 0', fontSize: '20px', fontWeight: '900' }}>নতুন অ্যাকাউন্ট</h2>
-          <p style={{ color: '#65676B', fontSize: '12px', margin: '0 0 18px 0' }}>এসএসসি ২০১৪ ব্যাচ কমিউনিটিতে যুক্ত হোন।</p>
-          
-          {authError && <div style={{ background: '#FEF2F2', color: '#B91C1C', padding: '10px', borderRadius: '8px', fontSize: '11px', marginBottom: '12px' }}>{authError}</div>}
-
-          <form onSubmit={handleSignUpStep1} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <input required type="text" placeholder="আপনার পূর্ণ নাম *" value={fullNameInput} onChange={e => setFullNameInput(e.target.value)} style={{ padding: '11px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px' }} />
-            <input required type="email" placeholder="ইমেইল এড্রেস *" value={emailInput} onChange={e => setEmailInput(e.target.value)} style={{ padding: '11px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px' }} />
-            <input required type="tel" placeholder="মোবাইল নম্বর (017XXXXXXXX) *" value={phoneInput} onChange={e => setPhoneInput(e.target.value)} style={{ padding: '11px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px' }} />
-            <input required type="password" placeholder="পাসওয়ার্ড (কমপক্ষে ৬ অক্ষর) *" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} style={{ padding: '11px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px' }} />
-            <input required type="password" placeholder="কনফার্ম পাসওয়ার্ড *" value={confirmPasswordInput} onChange={e => setConfirmPasswordInput(e.target.value)} style={{ padding: '11px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '13px' }} />
-            
-            <button type="submit" disabled={authSubmitting} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', marginTop: '6px' }}>
-              {authSubmitting ? 'প্রসেসিং...' : 'পরবর্তী ধাপ (প্রোফাইল)'}
-            </button>
-          </form>
-
-          <div style={{ marginTop: '16px', textAlign: 'center', fontSize: '12px' }}>
-            <button onClick={() => setAppStage('login')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>ইতোমধ্যে অ্যাকাউন্ট আছে? লগইন করুন</button>
-          </div>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#F3F6F4', padding: '20px', textAlign: 'center' }}>
+        <div style={{ background: '#fff', padding: '30px 20px', borderRadius: '20px', boxShadow: '0 4px 20px rgba(0,0,0,0.1)', maxWidth: '400px', width: '100%' }}>
+          <div style={{ fontSize: '50px', marginBottom: '10px' }}>⏳</div>
+          <h2 style={{ color: '#D97706', margin: '0 0 10px 0', fontSize: '20px' }}>অ্যাকাউন্ট অনুমোদনের অপেক্ষায়</h2>
+          <p style={{ color: '#475569', fontSize: '13px', lineHeight: '1.5' }}>আপনার অ্যাকাউন্টটি অ্যাডমিন প্যানেলে ভেরিফিকেশনের অপেক্ষায় আছে। পরিচয় নিশ্চিত হওয়ার পর আপনাকে সম্পূর্ণ অ্যাক্সেস দেওয়া হবে।</p>
+          <button onClick={handleLogout} style={{ marginTop: '20px', background: '#0A4D2E', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '10px', fontWeight: 'bold', width: '100%', cursor: 'pointer' }}>লগআউট করুন</button>
         </div>
       </div>
     );
   }
 
-  // PHASE 5: COMPLETE PROFILE GATE (Step 2 to 4)
-  if (appStage === 'complete_profile') {
-    return (
-      <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-        <div style={{ background: '#fff', padding: '24px', borderRadius: '20px', width: '100%', maxWidth: '420px', boxShadow: '0 8px 24px rgba(0,0,0,0.1)' }}>
-          <h2 style={{ color: '#581C87', margin: '0 0 4px 0', fontSize: '18px', fontWeight: '900' }}>প্রোফাইল তথ্য পূরণ করুন</h2>
-          <p style={{ color: '#65676B', fontSize: '11px', margin: '0 0 16px 0' }}>সান্দিকোনা স্কুল এন্ড কলেজ • এসএসসি ব্যাচ ২০১৪</p>
-
-          <form onSubmit={handleCompleteProfile} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            
-            {/* Avatar Upload */}
-            <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-              <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: '#E2E8F0', margin: '0 auto 6px auto', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #7C3AED' }}>
-                {avatarPreview ? <img src={avatarPreview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '📷'}
-              </div>
-              <label style={{ fontSize: '11px', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>
-                প্রোফাইল ছবি আপলোড করুন
-                <input type="file" accept="image/*" onChange={handleImageUpload} style={{ display: 'none' }} />
-              </label>
-            </div>
-
-            <div>
-              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>পূর্ণ নাম:</label>
-              <input type="text" value={fullNameInput} onChange={e => setFullNameInput(e.target.value)} placeholder="আপনার নাম" style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px' }} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>জন্মতারিখ:</label>
-                <input type="date" value={dobInput} onChange={e => setDobInput(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px' }} />
-              </div>
-              <div>
-                <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>লিঙ্গ:</label>
-                <select value={genderInput} onChange={e => setGenderInput(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px', background: '#fff' }}>
-                  <option value="পুরুষ">পুরুষ</option>
-                  <option value="মহিলা">মহিলা</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>পেশা / বর্তমান অবস্থান:</label>
-              <input type="text" placeholder="উদাঃ চাকরিজীবী / ঢাকা" value={professionInput} onChange={e => setProfessionInput(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px' }} />
-            </div>
-
-            <div>
-              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>নিজ গ্রাম / এলাকা:</label>
-              <input type="text" placeholder="উদাঃ সান্দিকোনা" value={locationInput} onChange={e => setLocationInput(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px' }} />
-            </div>
-
-            <div>
-              <label style={{ fontSize: '11px', fontWeight: 'bold', color: '#4B5563' }}>বায়ো (সংক্ষিপ্ত পরিচিতি):</label>
-              <textarea rows={2} placeholder="স্কুল জীবন বা বর্তমান নিয়ে কিছু লিখুন..." value={bioInput} onChange={e => setBioInput(e.target.value)} style={{ width: '100%', padding: '9px', borderRadius: '8px', border: '1px solid #CBD5E1', fontSize: '12px', boxSizing: 'border-box', marginTop: '2px' }} />
-            </div>
-
-            <button type="submit" disabled={authSubmitting} style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 'bold', fontSize: '14px', cursor: 'pointer', marginTop: '8px' }}>
-              {authSubmitting ? 'সেভ হচ্ছে...' : 'প্রোফাইল সেভ করে প্রবেশ করুন 🚀'}
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // PHASE 6: MAIN APP
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', backgroundColor: '#F0F2F5', minHeight: '100vh', paddingBottom: '90px', margin: 0, color: '#1C1E21' }}>
       
-      {/* 🌟 Top Header */}
+      {activeToast && (
+        <div style={{ position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)', width: '92%', maxWidth: '460px', backgroundColor: '#0F172A', color: '#fff', padding: '12px', borderRadius: '12px', zIndex: 9999, display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ fontSize: '20px' }}>{activeToast.icon}</div>
+          <div><h5 style={{ margin: '0 0 2px 0', fontSize: '12px', color: '#FCD34D' }}>{activeToast.title}</h5><p style={{ margin: 0, fontSize: '11px' }}>{activeToast.body}</p></div>
+        </div>
+      )}
+
+      {/* 🌟 1. TOP HEADER */}
       <div style={{ background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 1000, boxShadow: '0 2px 10px rgba(0,0,0,0.15)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div>
@@ -430,92 +407,302 @@ export default function App() {
             <div>{currentTimeStr || '...'}</div>
             <div>{currentDateStr || '...'}</div>
           </div>
-          <span style={{ fontSize: '18px', cursor: 'pointer' }} onClick={() => setActiveTab('chat')}>💬</span>
-          {userProfile && (
-            <div onClick={() => setActiveTab('profile')} style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', border: '2px solid #fff', overflow: 'hidden' }}>
-              {userProfile.profileImage ? <img src={userProfile.profileImage} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : userProfile.fullName.charAt(0)}
+          <span style={{ fontSize: '18px', cursor: 'pointer' }} onClick={() => { setPrivateChatRecipient(null); setActiveTab('chat'); }}>💬</span>
+          {currentUser && userProfile ? (
+            <div onClick={() => setActiveTab('profile')} style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer', border: '2px solid #fff' }}>
+              {userProfile.name.charAt(0)}
             </div>
+          ) : (
+            <button onClick={() => { setAuthMode('login'); setShowAuthModal(true); }} style={{ background: '#10B981', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}>লগইন</button>
           )}
         </div>
       </div>
 
       <main style={{ maxWidth: '600px', margin: '0 auto', padding: '10px' }}>
         
-        {/* HOMEPAGE */}
+        {/* ==========================================
+            🏠 HOME TAB (Newsfeed, Banner & Event)
+            ========================================== */}
         {activeTab === 'home' && (
           <div>
-            {/* School Welcome Banner */}
-            <div style={{ backgroundImage: "linear-gradient(135deg, rgba(88, 28, 135, 0.85) 0%, rgba(124, 58, 237, 0.85) 100%), url('/header-bg.jpg')", backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: '16px', padding: '18px', color: '#fff', textAlign: 'center', marginBottom: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.15)' }}>
+            {/* 🏫 2. WELCOME BANNER */}
+            <div style={{ 
+              backgroundImage: headerBgUrl ? ("linear-gradient(135deg, rgba(88, 28, 135, 0.85) 0%, rgba(124, 58, 237, 0.85) 100%), url('" + headerBgUrl + "')") : "linear-gradient(135deg, rgba(88, 28, 135, 0.85) 0%, rgba(124, 58, 237, 0.85) 100%), url('/header-bg.jpg')",
+              backgroundSize: 'cover', backgroundPosition: 'center', borderRadius: '16px', padding: '18px', color: '#fff', textAlign: 'center', marginBottom: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.15)', border: '1px solid #7C3AED' 
+            }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#F59E0B', margin: '0 auto 8px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', border: '2px solid #fff' }}>🎓</div>
               <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.25)', padding: '2px 10px', borderRadius: '10px', color: '#FEF08A', fontWeight: 'bold' }}>স্বাগতম</span>
               <h2 style={{ fontSize: '20px', margin: '6px 0 2px 0', fontWeight: '900' }}>এস এস সি ব্যাচ ২০১৪ কমিউনিটি</h2>
               <p style={{ margin: '0 0 2px 0', fontSize: '12px', opacity: 0.95, fontWeight: 'bold' }}>সান্দিকোনা স্কুল এন্ড কলেজ</p>
               <span style={{ fontSize: '11px', color: '#E9D5FF' }}>📍 সান্দিকোনা, কেন্দুয়া, নেত্রকোনা।</span>
             </div>
 
-            {/* Post Composer */}
+            {/* 📢 3. LIVE NOTICE TICKER */}
+            <div style={{ backgroundColor: '#fff', borderRadius: '10px', padding: '7px 10px', display: 'flex', alignItems: 'center', overflow: 'hidden', marginBottom: '10px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+              <span style={{ backgroundColor: '#7C3AED', color: '#FFFFFF', fontSize: '9px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', marginRight: '8px', flexShrink: 0 }}>🔴 LIVE</span>
+              <div style={{ overflow: 'hidden', whiteSpace: 'nowrap', width: '100%' }}>
+                <marquee behavior="scroll" direction="left" scrollamount="5" style={{ fontSize: '12px', color: '#4B5563', fontWeight: '600' }}>{announcement}</marquee>
+              </div>
+            </div>
+
+            {/* ⏳ 4. FRIENDSHIP LIVE COUNTER */}
+            <div style={{ background: 'linear-gradient(135deg, #1E3A8A 0%, #1E40AF 100%)', borderRadius: '14px', padding: '12px', marginBottom: '10px', color: '#fff', textAlign: 'center', boxShadow: '0 4px 12px rgba(30,58,138,0.2)' }}>
+              <span style={{ fontSize: '10px', color: '#93C5FD', fontWeight: 'bold', display: 'block', marginBottom: '4px' }}>🎓 এস এস সি ২০১৪ পাসের পর আমাদের বন্ধুত্বের অতিবাহিত সময়</span>
+              <div style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.years}</span>বছর</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.months}</span>মাস</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.days}</span>দিন</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.hours}</span>ঘণ্টা</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900' }}>{batchTimeElapsed.minutes}</span>মিনিট</div>
+                <div><span style={{ fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>{batchTimeElapsed.seconds}</span>সেকেন্ড</div>
+              </div>
+            </div>
+
+            {/* Reunion Event Card */}
+            <div style={{ background: 'linear-gradient(135deg, #0A4D2E 0%, #137547 100%)', borderRadius: '14px', padding: '14px', marginBottom: '10px', color: '#fff', boxShadow: '0 4px 12px rgba(10, 77, 46, 0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: '0 0 2px 0', fontSize: '15px', fontWeight: '900', color: '#FEF08A' }}>পুনর্মিলনী ২০২৭</h3>
+                  <p style={{ margin: 0, fontSize: '11px', opacity: 0.9 }}>সান্দিকোনা স্কুল এন্ড কলেজ মাঠ</p>
+                </div>
+                <button onClick={() => { if(!currentUser) {setShowAuthModal(true); return;} setShowEventRegModal(true); }} style={{ background: '#FEF08A', color: '#0A4D2E', border: 'none', padding: '8px 14px', borderRadius: '8px', fontWeight: '900', fontSize: '11px', cursor: 'pointer' }}>
+                  {hasRegisteredForEvent ? 'রেজিস্টার্ড ✓' : 'রেজিস্ট্রেশন'}
+                </button>
+              </div>
+            </div>
+
+            {/* ✍️ 5. POST COMPOSER */}
             <div style={{ background: '#fff', borderRadius: '14px', padding: '10px 12px', marginBottom: '12px', border: '1px solid #E4E6EB' }}>
-              <form onSubmit={async (e) => {
-                e.preventDefault();
-                if (!currentUser || !userProfile || !newPostText.trim()) return;
-                await addDoc(collection(db, "posts"), {
-                  authorUid: currentUser.uid,
-                  authorName: userProfile.fullName,
-                  authorVillage: userProfile.village || userProfile.currentLocation,
-                  content: newPostText.trim(),
-                  likes: [],
-                  commentsCount: 0,
-                  timestamp: Date.now(),
-                  dateStr: new Date().toLocaleDateString('bn-BD', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                });
-                setNewPostText('');
-              }}>
-                <textarea rows={2} placeholder={userProfile?.fullName + ", কিছু লিখুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '10px', border: '1px solid #CCD0D5', fontSize: '12px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#F0F2F5' }} />
+              <form onSubmit={handleCreatePost}>
+                <textarea rows={2} placeholder={currentUser ? (userProfile?.name + ", কিছু লিখুন, ছবি দিন...") : "পোস্ট করতে লগইন করুন..."} value={newPostText} onChange={e => setNewPostText(e.target.value)} disabled={!currentUser} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid #CCD0D5', fontSize: '12px', outline: 'none', boxSizing: 'border-box', backgroundColor: '#F0F2F5' }} />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
-                  <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>পোস্ট করুন</button>
+                  <button type="submit" disabled={isPosting || !currentUser} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 16px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                    {isPosting ? 'পোস্ট হচ্ছে...' : 'পোস্ট করুন'}
+                  </button>
                 </div>
               </form>
             </div>
 
-            {/* News Feed */}
+            {/* 📰 6. NEWS FEED */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {posts.map(post => (
-                <div key={post.id} style={{ background: '#fff', borderRadius: '14px', padding: '12px', border: '1px solid #E4E6EB' }}>
-                  <h4 style={{ margin: 0, fontSize: '13px', fontWeight: 'bold', color: '#050505' }}>{post.authorName} <span style={{ fontSize: '9px', color: '#65676B' }}>({post.authorVillage})</span></h4>
-                  <p style={{ fontSize: '12px', color: '#1C1E21', margin: '6px 0' }}>{post.content}</p>
+              {posts.map(post => {
+                const isLiked = currentUser && post.likes.includes(currentUser.uid);
+                return (
+                  <div key={post.id} style={{ background: '#fff', borderRadius: '14px', padding: '12px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#7C3AED', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '12px' }}>{post.authorName.charAt(0)}</div>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '12px', fontWeight: 'bold', color: '#050505' }}>{post.authorName}</h4>
+                          <span style={{ fontSize: '9px', color: '#65676B' }}>{post.dateStr} • {post.authorVillage}</span>
+                        </div>
+                      </div>
+                      {(currentUser?.uid === post.authorUid || userProfile?.role === 'super_admin') && (
+                        <button onClick={() => deleteDoc(doc(db, "posts", post.id))} style={{ background: 'none', border: 'none', color: '#DC2626', fontSize: '13px', cursor: 'pointer' }}>🗑️</button>
+                      )}
+                    </div>
+                    
+                    <p style={{ fontSize: '12px', color: '#1C1E21', whiteSpace: 'pre-line', margin: '0 0 8px 0' }}>{post.content}</p>
+                    
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#65676B', borderBottom: '1px solid #E4E6EB', paddingBottom: '4px', marginBottom: '6px' }}>
+                      <span>❤️ {post.likes.length} লাইক</span>
+                      <span>💬 {post.commentsCount} কমেন্ট</span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button onClick={() => handleToggleLike(post)} style={{ flex: 1, background: isLiked ? '#FEE2E2' : '#F0F2F5', color: isLiked ? '#DC2626' : '#65676B', border: 'none', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
+                        {isLiked ? '❤️ লাইকড' : '🤍 লাইক'}
+                      </button>
+                      <button onClick={() => setActiveCommentsPostId(activeCommentsPostId === post.id ? null : post.id)} style={{ flex: 1, background: '#F0F2F5', color: '#65676B', border: 'none', padding: '6px', borderRadius: '6px', fontWeight: 'bold', fontSize: '11px', cursor: 'pointer' }}>
+                        💬 কমেন্ট
+                      </button>
+                    </div>
+
+                    {activeCommentsPostId === post.id && (
+                      <div style={{ marginTop: '8px', background: '#F0F2F5', borderRadius: '8px', padding: '8px' }}>
+                        <div style={{ maxHeight: '120px', overflowY: 'auto', marginBottom: '6px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          {commentsList.map(c => <div key={c.id} style={{ background: '#fff', padding: '5px 8px', borderRadius: '6px', fontSize: '11px' }}><strong style={{ color: '#581C87' }}>{c.authorName}: </strong>{c.text}</div>)}
+                        </div>
+                        <form onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!currentUser || !commentInput.trim()) return;
+                          addDoc(collection(db, "posts", post.id, "comments"), { authorName: userProfile?.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
+                          setCommentInput('');
+                        }} style={{ display: 'flex', gap: '4px' }}>
+                          <input type="text" placeholder="মন্তব্য লিখুন..." value={commentInput} onChange={e => setCommentInput(e.target.value)} style={{ flex: 1, padding: '6px 10px', borderRadius: '16px', border: '1px solid #CCD0D5', fontSize: '11px', outline: 'none' }} />
+                          <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '5px 12px', borderRadius: '16px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>পাঠান</button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* FRIENDS TAB */}
+        {activeTab === 'friends' && (
+          <div>
+            <h3 style={{ margin: '0 0 10px 0', fontSize: '16px', color: '#581C87', fontWeight: 'bold' }}>👥 বন্ধু তালিকা</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {allUsers.filter(u => u.status === 'approved' && u.uid !== currentUser?.uid).map(m => (
+                <div key={m.uid} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', color: '#0F172A' }}>{m.name}</h4>
+                    <p style={{ margin: 0, fontSize: '11px', color: '#64748B' }}>🏡 {m.village} • {m.area}</p>
+                  </div>
+                  <button onClick={() => { setPrivateChatRecipient(m); setActiveTab('chat'); }} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>
+                    💬 মেসেজ
+                  </button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* User Profile Page */}
-        {activeTab === 'profile' && userProfile && (
-          <div style={{ background: '#fff', borderRadius: '16px', padding: '20px', textAlign: 'center' }}>
-            <div style={{ width: '90px', height: '90px', borderRadius: '50%', background: '#7C3AED', color: '#fff', margin: '0 auto 10px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', fontWeight: 'bold', overflow: 'hidden' }}>
-              {userProfile.profileImage ? <img src={userProfile.profileImage} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : userProfile.fullName.charAt(0)}
+        {/* MEMORIES TAB */}
+        {activeTab === 'memories' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#581C87', fontWeight: 'bold' }}>📸 স্মৃতি গ্যালারি</h3>
+              <button onClick={() => setShowMemoryUploadModal(true)} style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>স্মৃতি দিন ➕</button>
             </div>
-            <h2 style={{ margin: '0 0 4px 0', fontSize: '20px', color: '#0F172A' }}>{userProfile.fullName}</h2>
-            <p style={{ margin: 0, fontSize: '12px', color: '#64748B' }}>🏡 গ্রামের বাড়ি: {userProfile.village} • বর্তমান: {userProfile.currentLocation}</p>
-            {userProfile.bio && <p style={{ margin: '12px 0', fontSize: '12px', background: '#F8FAFC', padding: '10px', borderRadius: '8px', color: '#334155' }}>{userProfile.bio}</p>}
-            <button onClick={handleLogout} style={{ marginTop: '20px', background: '#EF4444', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>লগআউট করুন</button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {memories.map(item => (
+                <div key={item.id} style={{ background: '#fff', borderRadius: '12px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                  <img src={item.mediaUrl} style={{ width: '100%', maxHeight: '300px', objectFit: 'contain', backgroundColor: '#000' }} />
+                  <div style={{ padding: '10px' }}>
+                    <p style={{ margin: '0 0 4px 0', fontSize: '12px', fontWeight: 'bold' }}>{item.caption}</p>
+                    <span style={{ fontSize: '10px', color: '#64748B' }}>আপলোডকারী: {item.uploader}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
+        {/* PRIDE TAB */}
+        {activeTab === 'pride' && (
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#D97706', fontWeight: 'bold' }}>🏆 ব্যাচের গৌরব</h3>
+              <button onClick={() => setShowAddPrideModal(true)} style={{ background: '#D97706', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}>যুক্ত হোন ➕</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {prideList.map(p => (
+                <div key={p.id} style={{ background: '#fff', padding: '12px', borderRadius: '12px', border: '1px solid #FEF08A' }}>
+                  <h4 style={{ margin: '0 0 2px 0', fontSize: '14px', fontWeight: 'bold' }}>{p.name}</h4>
+                  <span style={{ fontSize: '11px', color: '#D97706', fontWeight: 'bold' }}>{p.profession} ({p.organization})</span>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#475569' }}>{p.details}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SCHOOL TAB */}
+        {activeTab === 'school' && (
+          <div>
+            <div style={{ background: '#fff', padding: '14px', borderRadius: '14px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
+              <h3 style={{ margin: '0 0 6px 0', fontSize: '15px', color: '#0A4D2E', fontWeight: 'bold' }}>🏫 সান্দিকোনা স্কুল এন্ড কলেজ</h3>
+              <p style={{ margin: 0, fontSize: '12px', color: '#334155', lineHeight: '1.5' }}>{schoolHistory}</p>
+            </div>
+            <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#0A4D2E', fontWeight: 'bold' }}>👨‍🏫 শিক্ষকবৃন্দ</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {teachers.map(t => (
+                <div key={t.id} style={{ background: '#fff', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h5 style={{ margin: '0 0 2px 0', fontSize: '13px', fontWeight: 'bold' }}>{t.name}</h5>
+                    <span style={{ fontSize: '10px', color: '#64748B' }}>{t.designation} • বিষয়: {t.subject}</span>
+                  </div>
+                  {t.phone && <a href={"tel:" + t.phone} style={{ textDecoration: 'none', background: '#DCFCE7', color: '#15803D', padding: '4px 8px', borderRadius: '6px', fontSize: '10px', fontWeight: 'bold' }}>📞 কল</a>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* CHAT / COMMUNITY TAB */}
         {activeTab === 'chat' && (
-          <ChatRoom currentUser={currentUser} userProfile={{ uid: userProfile?.uid || '', name: userProfile?.fullName || 'সহপাঠী', role: userProfile?.role || 'member' } as any} onOpenAuth={() => {}} />
+          <ChatRoom currentUser={currentUser} userProfile={userProfile} recipientUser={privateChatRecipient} onBack={() => { setPrivateChatRecipient(null); setActiveTab('home'); }} onOpenAuth={() => setShowAuthModal(true)} />
         )}
       </main>
 
-      {/* Bottom Nav */}
+      {/* Memory Upload Modal */}
+      {showMemoryUploadModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '360px' }}>
+            <h3 style={{ margin: '0 0 10px 0', color: '#0A4D2E' }}>📸 স্মৃতি আপলোড</h3>
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if(!selectedMemFile || !currentUser) return;
+              const reader = new FileReader();
+              reader.onloadend = async () => {
+                await addDoc(collection(db, "memories"), { uploader: userProfile?.name || 'সহপাঠী', caption: memCaption, mediaUrl: reader.result as string, mediaType: 'image', timestamp: Date.now() });
+                setShowMemoryUploadModal(false); setSelectedMemFile(null); setMemCaption('');
+                alert('স্মৃতি সফলভাবে আপলোড হয়েছে!');
+              };
+              reader.readAsDataURL(selectedMemFile);
+            }} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <input type="text" placeholder="ক্যাপশন..." value={memCaption} onChange={e => setMemCaption(e.target.value)} style={{ padding: '8px', borderRadius: '6px', border: '1px solid #CBD5E1' }} />
+              <input required type="file" accept="image/*" onChange={e => setSelectedMemFile(e.target.files?.[0] || null)} style={{ padding: '6px' }} />
+              <button type="submit" style={{ background: '#0A4D2E', color: '#fff', border: 'none', padding: '10px', borderRadius: '8px', fontWeight: 'bold' }}>আপলোড করুন</button>
+            </form>
+            <button onClick={() => setShowMemoryUploadModal(false)} style={{ marginTop: '8px', background: 'none', border: 'none', color: '#DC2626', width: '100%' }}>বাতিল</button>
+          </div>
+        </div>
+      )}
+
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <div style={{ backgroundColor: '#FFFFFF', borderRadius: '16px', padding: '20px', width: '100%', maxWidth: '360px' }}>
+            <h3 style={{ margin: '0 0 12px 0', color: '#581C87' }}>{authMode === 'login' ? '🔐 লগইন' : '📝 নিবন্ধন'}</h3>
+            <form onSubmit={authMode === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {authMode === 'signup' && (
+                <>
+                  <input required type="text" placeholder="আপনার নাম *" value={authName} onChange={e => setAuthName(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+                  <input required type="text" placeholder="নিজ গ্রাম *" value={authVillage} onChange={e => setAuthVillage(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+                </>
+              )}
+              <input required type="tel" placeholder="মোবাইল নম্বর *" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+              <input required type="password" placeholder="পাসওয়ার্ড *" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1' }} />
+              <button type="submit" style={{ background: '#7C3AED', color: '#fff', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{authMode === 'login' ? 'লগইন করুন' : 'নিবন্ধন সম্পন্ন করুন'}</button>
+            </form>
+            <div style={{ marginTop: '10px', textAlign: 'center' }}>
+              {authMode === 'login' ? 
+                <button onClick={() => setAuthMode('signup')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>নতুন অ্যাকাউন্ট খুলুন</button> : 
+                <button onClick={() => setAuthMode('login')} style={{ background: 'none', border: 'none', color: '#7C3AED', fontWeight: 'bold', cursor: 'pointer' }}>সরাসরি লগইন করুন</button>
+              }
+            </div>
+            <button onClick={() => setShowAuthModal(false)} style={{ marginTop: '10px', background: 'none', border: 'none', color: '#DC2626', width: '100%', cursor: 'pointer' }}>বাতিল</button>
+          </div>
+        </div>
+      )}
+
+      {/* 🧭 9. FIXED BOTTOM NAVIGATION BAR (Exactly 7 Buttons as specified) */}
       <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E4E6EB', display: 'flex', justifyContent: 'space-around', padding: '6px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
-        <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => { setActiveTab('home'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '16px' }}>🏠</span><span>হোম</span>
         </button>
-        <button onClick={() => setActiveTab('profile')} style={{ border: 'none', background: 'none', color: activeTab === 'profile' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
-          <span style={{ fontSize: '16px' }}>👤</span><span>প্রোফাইল</span>
+        <button onClick={() => { setActiveTab('friends'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'friends' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>👥</span><span>বন্ধু</span>
         </button>
-        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
-          <span style={{ fontSize: '16px' }}>💬</span><span>আড্ডা</span>
+        <button onClick={() => { setActiveTab('memories'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'memories' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>📸</span><span>স্মৃতি</span>
+        </button>
+        <button onClick={() => { setActiveTab('pride'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'pride' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>🏆</span><span>গৌরব</span>
+        </button>
+        <button onClick={() => { setActiveTab('school'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'school' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>🏫</span><span>বিদ্যালয়</span>
+        </button>
+        <button onClick={() => { setActiveTab('chat'); setPrivateChatRecipient(null); }} style={{ border: 'none', background: 'none', color: activeTab === 'chat' && !privateChatRecipient ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>🌐</span><span>কমিউনিটি</span>
+        </button>
+        <button onClick={() => alert('যোগাযোগ সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+          <span style={{ fontSize: '16px' }}>📞</span><span>যোগাযোগ</span>
         </button>
       </nav>
     </div>
