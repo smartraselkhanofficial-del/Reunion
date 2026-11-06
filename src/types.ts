@@ -1,25 +1,31 @@
 export interface UserProfile {
   uid: string;
-  name: string;
-  phone: string;
-  tshirt: string;
-  area: string;
-  village: string;
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  profileImage?: string;
+  coverImage?: string;
+  schoolName: string;
+  batchYear: string; // '2014'
+  dateOfBirth: string;
+  gender: string;
+  profession: string;
+  currentLocation: string;
+  permanentAddress?: string;
+  whatsappNumber?: string;
+  facebookUrl?: string;
+  bio: string;
+  profileCompleted: boolean;
+  accountStatus: 'pending' | 'approved' | 'suspended';
   role: 'super_admin' | 'member';
-  status: 'pending' | 'approved' | 'rejected' | 'suspended';
-  avatarUrl?: string;
-  coverUrl?: string;
-  bio?: string;
+  privacySettings: {
+    showPhone: boolean;
+    showDob: boolean;
+    profileVisible: boolean;
+    showProfession: boolean;
+  };
   createdAt: number;
-}
-
-export interface FriendRequest {
-  id: string; 
-  senderUid: string;
-  senderName: string;
-  receiverUid: string;
-  status: 'pending' | 'accepted' | 'rejected';
-  timestamp: number;
+  updatedAt: number;
 }
 
 export interface PostItem {
@@ -43,42 +49,11 @@ export interface PostComment {
   timestamp: number;
 }
 
-export interface MemoryItem {
-  id: string;
-  uploader: string;
-  caption: string;
-  mediaUrl: string;
-  mediaType: 'image' | 'video';
-  timestamp: number;
-}
-
-export interface BatchPrideItem {
-  id: string;
-  name: string;
-  profession: string;
-  organization: string;
-  village: string;
-  fullAddress: string;
-  details: string;
-  phone: string;
-}
-
-export interface TeacherItem {
-  id: string;
-  name: string;
-  subject: string;
-  designation: string;
-  phone?: string;
-}
-
 export interface ChatMsg {
   id: string;
   sender: string;
   senderUid?: string;
   text?: string;
-  fileUrl?: string;
-  fileType?: string;
-  fileName?: string;
   timestamp: number;
   time: string;
 }
