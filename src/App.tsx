@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import { 
   collection, 
   addDoc, 
@@ -22,7 +22,7 @@ import { UserProfile, PostItem } from "./types";
 import ChatRoom from "./components/ChatRoom";
 
 // ==========================================
-// 🛡️ STEP 3: REACT ERROR BOUNDARY
+// 🛡️ ERROR BOUNDARY
 // ==========================================
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -94,7 +94,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 
 // ==========================================
-// 🚀 MAIN APPLICATION COMPONENT
+// 🚀 MAIN APPLICATION
 // ==========================================
 function MainApplication() {
   const [appStage, setAppStage] = useState<string>('splash');
@@ -116,13 +116,6 @@ function MainApplication() {
   const [regPassword, setRegPassword] = useState<string>('');
   const [regConfirmPassword, setRegConfirmPassword] = useState<string>('');
 
-  const [regDob, setRegDob] = useState<string>('');
-  const [regGender, setRegGender] = useState<string>('পুরুষ');
-  const [regProfession, setRegProfession] = useState<string>('');
-  const [regCurrentLocation, setRegCurrentLocation] = useState<string>('');
-  const [regBio, setRegBio] = useState<string>('');
-  const [regProfileImg, setRegProfileImg] = useState<string>('');
-
   // হোমপেজ লাইভ ফিচার স্টেটস
   const [currentTimeStr, setCurrentTimeStr] = useState<string>('');
   const [currentDateStr, setCurrentDateStr] = useState<string>('');
@@ -131,7 +124,7 @@ function MainApplication() {
   const [newPostText, setNewPostText] = useState<string>('');
   const [allMembers, setAllMembers] = useState<UserProfile[]>([]);
 
-  // নিরাপদ প্রোফাইল অ্যাডাপ্টার (যাতে কোনো ফিল্ড মিসিং থাকলে ক্র্যাশ না করে)
+  // নিরাপদ প্রোফাইল অ্যাডাপ্টার
   const formatProfileData = (uid: string, raw: any, emailFallback: string): UserProfile => {
     return {
       uid: uid,
@@ -159,7 +152,7 @@ function MainApplication() {
     };
   };
 
-  // 1. Persistent Auth Session Handler (With Null-Safety)
+  // সেশন হ্যান্ডলার
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
@@ -167,20 +160,14 @@ function MainApplication() {
         try {
           const userDoc = await getDoc(doc(db, "users", user.uid));
           if (userDoc.exists()) {
-            const safeProfile = formatProfileData(user.uid, userDoc.data(), user.email || '');
-            setUserProfile(safeProfile);
-            setAppStage('main'); // সাকসেসফুল ফেচ শেষে সরাসরি মেইনে নিয়ে যাওয়া
+            setUserProfile(formatProfileData(user.uid, userDoc.data(), user.email || ''));
+            setAppStage('main');
           } else {
-            // ডকুমেন্টস মিসিং থাকলে ব্যাকআপ প্রোফাইল তৈরি
-            const fallbackProfile = formatProfileData(user.uid, {}, user.email || '');
-            setUserProfile(fallbackProfile);
+            setUserProfile(formatProfileData(user.uid, {}, user.email || ''));
             setAppStage('main');
           }
         } catch (e) {
-          console.error("Firestore Fetch Exception:", e);
-          // নেটওয়ার্ক ফেইল করলেও অ্যাপ যেন সাদা না হয়
-          const fallbackProfile = formatProfileData(user.uid, {}, user.email || '');
-          setUserProfile(fallbackProfile);
+          setUserProfile(formatProfileData(user.uid, {}, user.email || ''));
           setAppStage('main');
         }
       } else {
@@ -194,7 +181,7 @@ function MainApplication() {
     return () => unsubAuth();
   }, []);
 
-  // 2. Clock & Elapsed Friendship Time Counter
+  // ঘড়ি ও বন্ধুত্বের সময় গণনা
   useEffect(() => {
     const sscDate = new Date('2014-05-17T00:00:00');
     const timer = setInterval(() => {
@@ -221,7 +208,7 @@ function MainApplication() {
     return () => clearInterval(timer);
   }, []);
 
-  // 3. Realtime Posts & Directory Listener
+  // রিয়েলটাইম ডেটাবেস লিসেনার
   useEffect(() => {
     if (appStage !== 'main') return;
 
@@ -230,13 +217,13 @@ function MainApplication() {
       const pList: PostItem[] = [];
       snap.forEach(d => pList.push({ id: d.id, ...d.data() } as PostItem));
       setPosts(pList);
-    }, (err) => console.log("Post fetch handled:", err));
+    });
 
     const unsubUsers = onSnapshot(collection(db, "users"), (snap) => {
       const uList: UserProfile[] = [];
       snap.forEach(d => uList.push(formatProfileData(d.id, d.data(), '')));
       setAllMembers(uList);
-    }, (err) => console.log("User fetch handled:", err));
+    });
 
     return () => {
       unsubPosts();
@@ -244,7 +231,7 @@ function MainApplication() {
     };
   }, [appStage]);
 
-  // Login Action
+  // লগইন হ্যান্ডলার
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -259,9 +246,8 @@ function MainApplication() {
     try {
       const userCred = await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
       const userDoc = await getDoc(doc(db, "users", userCred.user.uid));
-      const safeProfile = formatProfileData(userCred.user.uid, userDoc.exists() ? userDoc.data() : {}, emailToUse);
-      setUserProfile(safeProfile);
-      setAppStage('main'); // সাকসেসফুল প্রমাণ পেয়ে তবেই মেইন অ্যাপ
+      setUserProfile(formatProfileData(userCred.user.uid, userDoc.exists() ? userDoc.data() : {}, emailToUse));
+      setAppStage('main');
     } catch (err: any) {
       setAuthError('ভুল ইমেইল/ফোন অথবা পাসওয়ার্ড। দয়া করে সঠিক তথ্য দিন।');
     } finally {
@@ -269,7 +255,7 @@ function MainApplication() {
     }
   };
 
-  // Sign Up Action
+  // সাইন আপ হ্যান্ডলার
   const handleSignUpStep1 = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -328,9 +314,7 @@ function MainApplication() {
     } catch (e) {}
   };
 
-  // ==========================================
-  // RENDER: SPLASH SCREEN
-  // ==========================================
+  // স্প্ল্যাশ স্ক্রিন
   if (appStage === 'splash') {
     return (
       <div style={{
@@ -365,9 +349,7 @@ function MainApplication() {
     );
   }
 
-  // ==========================================
-  // RENDER: WELCOME SCREEN
-  // ==========================================
+  // ওয়েলকাম স্ক্রিন
   if (appStage === 'welcome') {
     return (
       <div style={{
@@ -439,9 +421,7 @@ function MainApplication() {
     );
   }
 
-  // ==========================================
-  // RENDER: LOGIN SCREEN
-  // ==========================================
+  // লগইন স্ক্রিন
   if (appStage === 'login') {
     return (
       <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
@@ -511,9 +491,7 @@ function MainApplication() {
     );
   }
 
-  // ==========================================
-  // RENDER: SIGN UP SCREEN
-  // ==========================================
+  // সাইন আপ স্ক্রিন
   if (appStage === 'signup_step1') {
     return (
       <div style={{ minHeight: '100vh', background: '#F0F2F5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
@@ -545,9 +523,7 @@ function MainApplication() {
     );
   }
 
-  // ==========================================
-  // RENDER: MAIN APPLICATION (NO WHITE SCREEN GUARANTEED)
-  // ==========================================
+  // মেইন অ্যাপ
   return (
     <div style={{
       fontFamily: 'system-ui, sans-serif',
@@ -557,7 +533,7 @@ function MainApplication() {
       margin: 0,
       color: '#1C1E21'
     }}>
-      {/* 🌟 Top Header */}
+      {/* টপ হেডার */}
       <div style={{
         background: 'linear-gradient(135deg, #581C87 0%, #7C3AED 50%, #4C1D95 100%)',
         color: '#FFFFFF',
@@ -769,7 +745,7 @@ function MainApplication() {
         borderTop: '1px solid #E4E6EB',
         display: 'flex',
         justifyContent: 'space-around',
-        padding: '6px 0',
+        padding: '7px 0',
         zIndex: 1000,
         boxShadow: '0 -2px 10px rgba(0,0,0,0.05)'
       }}>
@@ -786,12 +762,15 @@ function MainApplication() {
           <span style={{ fontSize: '16px' }}>👤</span><span>প্রোফাইল</span>
         </button>
       </nav>
+
     </div>
   );
 }
 
-// Wrap with Error Boundary
-export function AppWithErrorBoundary() {
+// ==========================================
+// 🛡️ DEFAULT EXPORT COMPATIBLE WITH main.tsx
+// ==========================================
+export default function App() {
   return (
     <ErrorBoundary>
       <MainApplication />
