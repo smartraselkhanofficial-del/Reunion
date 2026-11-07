@@ -93,7 +93,7 @@ export default function ChatPage({ currentUser, currentProfile, friend, onBack }
       </div>
       <form onSubmit={sendMessage} style={{ display:'flex',gap:8,padding:10,borderTop:'1px solid #EDE9FE',background:'#fff' }}>
         <input value={draft} onChange={event=>setDraft(event.target.value)} placeholder="মেসেজ লিখুন..." style={{ flex:1,minWidth:0,border:'1px solid #DDD6FE',borderRadius:22,padding:'11px 14px',outline:'none',fontSize:14 }} />
-        <button type="submit" disabled={sending || !draft.trim()} style={{ border:0,borderRadius:22,padding:'0 18px',background:'#6D28D9',color:'#fff',fontWeight:700,opacity:sending||!draft.trim()?.5:1 }}>{sending?'...':'পাঠান'}</button>
+        <button type="submit" disabled={sending || !draft.trim()} style={{ border:0,borderRadius:22,padding:'0 18px',background:'#6D28D9',color:'#fff',fontWeight:700,opacity:(sending || !draft.trim()) ? 0.5 : 1 }}>{sending?'...':'পাঠান'}</button>
       </form>
     </section>
   );
