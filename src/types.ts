@@ -42,6 +42,7 @@ export interface PostItem {
   id: string;
   authorUid: string;
   authorName: string;
+  authorImage?: string;
   authorVillage: string;
   content: string;
   mediaUrl?: string;
