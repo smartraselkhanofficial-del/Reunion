@@ -166,7 +166,7 @@ export default function App() {
     try {
       await addDoc(collection(db, "posts"), {
         authorUid: currentUser.uid,
-        authorName: userProfile.name || userProfile.fullName || 'বন্ধু',
+        authorName: userProfile.fullName || userProfile.name || 'বন্ধু',
         authorImage: userProfile.profileImage || '',
         authorVillage: userProfile.village || userProfile.area || userProfile.permanentAddress || 'সান্দিকোনা',
         content: newPostText.trim(),
@@ -384,7 +384,7 @@ export default function App() {
             <div style={{ background: '#fff', borderRadius: '16px', padding: '12px 14px', marginBottom: '16px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '10px' }}>
                 <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
-                  {(userProfile?.name || 'স').charAt(0)}
+                  {(userProfile?.fullName || userProfile?.name || 'স').charAt(0)}
                 </div>
                 <input 
                   type="text" 
@@ -417,12 +417,12 @@ export default function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <button onClick={() => { const author = memberProfiles.find(m => m.uid === post.authorUid); if (author) { setSelectedProfile(author); setActiveTab('publicProfile'); } }} style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#6D28D9', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', position: 'relative', overflow:'hidden', padding:0, border:0, cursor:'pointer', flexShrink:0 }}>
-                          {(memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage) ? <img src={memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (post.authorName || 'ব').charAt(0)}
+                          {(memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage) ? <img src={memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (memberProfiles.find(m => m.uid === post.authorUid)?.fullName || memberProfiles.find(m => m.uid === post.authorUid)?.name || post.authorName || 'ব').charAt(0)}
                           <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', background: '#22C55E', borderRadius: '50%', border: '2px solid #fff' }}></span>
                         </button>
                         <div>
                           <h4 onClick={() => { const author = memberProfiles.find(m => m.uid === post.authorUid); if (author) { setSelectedProfile(author); setActiveTab('publicProfile'); } }} style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#050505', display: 'flex', alignItems: 'center', gap: '4px', cursor:'pointer' }}>
-                            {post.authorName || 'অজানা বন্ধু'} <span style={{ color: '#0866FF', fontSize: '12px' }}>✔</span>
+                            {memberProfiles.find(m => m.uid === post.authorUid)?.fullName || memberProfiles.find(m => m.uid === post.authorUid)?.name || post.authorName || 'অজানা বন্ধু'} <span style={{ color: '#0866FF', fontSize: '12px' }}>✔</span>
                           </h4>
                           <span style={{ fontSize: '11px', color: '#65676B' }}>{post.dateStr || 'সময় উল্লেখ নেই'} • 🌎</span>
                         </div>
