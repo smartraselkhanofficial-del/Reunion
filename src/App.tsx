@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, onSnapshot, doc, setDoc, query, orderBy, limit } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, doc, setDoc, query, orderBy, limit, where, updateDoc, deleteDoc, getDoc } from "firebase/firestore";
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, User } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment } from "./types";
@@ -14,6 +14,13 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [memberProfiles, setMemberProfiles] = useState<UserProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
+  const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = useState<any[]>([]);
+  const [sentFriendships, setSentFriendships] = useState<any[]>([]);
+  const [receivedFriendships, setReceivedFriendships] = useState<any[]>([]);
+  const [friendView, setFriendView] = useState<'suggestions' | 'incoming' | 'sent' | 'friends'>('suggestions');
+  const [friendActionBusy, setFriendActionBusy] = useState<string | null>(null);
+  const [friendNotice, setFriendNotice] = useState('');
 
   const [authPhone, setAuthPhone] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -109,6 +116,56 @@ export default function App() {
     });
     return () => unsubComments();
   }, [activeCommentsPostId]);
+
+  // Realtime friend requests and accepted friendships
+  useEffect(() => {
+    if (appStage !== 'main' || !currentUser) return;
+    const requestsRef = collection(db, "friendRequests");
+    const unsubIncoming = onSnapshot(query(requestsRef, where("receiverUid", "==", currentUser.uid), where("status", "==", "pending")), snap => setIncomingRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubOutgoing = onSnapshot(query(requestsRef, where("senderUid", "==", currentUser.uid), where("status", "==", "pending")), snap => setOutgoingRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubSentFriends = onSnapshot(query(requestsRef, where("senderUid", "==", currentUser.uid), where("status", "==", "accepted")), snap => setSentFriendships(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubReceivedFriends = onSnapshot(query(requestsRef, where("receiverUid", "==", currentUser.uid), where("status", "==", "accepted")), snap => setReceivedFriendships(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    return () => { unsubIncoming(); unsubOutgoing(); unsubSentFriends(); unsubReceivedFriends(); };
+  }, [appStage, currentUser?.uid]);
+
+  const sendFriendRequest = async (member: UserProfile) => {
+    if (!currentUser || member.uid === currentUser.uid) return;
+    setFriendActionBusy(member.uid);
+    setFriendNotice('');
+    try {
+      const incomingRef = doc(db, "friendRequests", member.uid + "_" + currentUser.uid);
+      const incomingSnap = await getDoc(incomingRef);
+      if (incomingSnap.exists() && incomingSnap.data().status === 'pending') {
+        setFriendNotice('এই বন্ধু ইতিমধ্যে আপনাকে অনুরোধ পাঠিয়েছেন। আসা অনুরোধ থেকে গ্রহণ করুন।');
+        setFriendView('incoming');
+        return;
+      }
+      await setDoc(doc(db, "friendRequests", currentUser.uid + "_" + member.uid), {
+        senderUid: currentUser.uid,
+        receiverUid: member.uid,
+        senderName: userProfile?.fullName || userProfile?.name || 'বন্ধু',
+        receiverName: member.fullName || member.name || 'বন্ধু',
+        status: 'pending',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+      setFriendNotice('বন্ধুত্বের অনুরোধ পাঠানো হয়েছে।');
+    } catch (error: any) {
+      setFriendNotice(error?.code === 'permission-denied' ? 'অনুরোধ পাঠানোর অনুমতি নেই। Firestore Rules-এ friendRequests অনুমতি দিতে হবে।' : 'অনুরোধ পাঠানো যায়নি। আবার চেষ্টা করুন।');
+    } finally { setFriendActionBusy(null); }
+  };
+
+  const respondFriendRequest = async (requestId: string, accept: boolean) => {
+    setFriendActionBusy(requestId);
+    setFriendNotice('');
+    try {
+      if (accept) await updateDoc(doc(db, "friendRequests", requestId), { status: 'accepted', updatedAt: Date.now() });
+      else await deleteDoc(doc(db, "friendRequests", requestId));
+      setFriendNotice(accept ? 'বন্ধুত্বের অনুরোধ গ্রহণ করা হয়েছে।' : 'অনুরোধটি বাতিল করা হয়েছে।');
+    } catch (error: any) {
+      setFriendNotice(error?.code === 'permission-denied' ? 'এই কাজের অনুমতি নেই। Firestore Rules পরীক্ষা করতে হবে।' : 'কাজটি সম্পন্ন হয়নি। আবার চেষ্টা করুন।');
+    } finally { setFriendActionBusy(null); }
+  };
 
   // Auth Functions
   const phoneToEmail = (phone: string) => phone.replace(/[^\d]/g, '') + "@sandikona2014.org";
@@ -324,14 +381,25 @@ export default function App() {
         {activeTab === 'publicProfile' && selectedProfile && <PublicProfilePage profile={selectedProfile} onBack={() => { setSelectedProfile(null); setActiveTab('home'); }} />}
         {activeTab === 'friends' && (
           <section style={{ background:'#fff', borderRadius:16, padding:14 }}>
-            <h2 style={{ color:'#4C1D95', marginTop:0 }}>আমাদের বন্ধুরা</h2>
-            <p style={{ color:'#64748B', fontSize:12 }}>নিবন্ধিত সদস্য: {memberProfiles.length} জন</p>
-            {memberProfiles.filter(m => m.uid !== currentUser?.uid).map(member => (
-              <button key={member.uid} onClick={() => { setSelectedProfile(member); setActiveTab('publicProfile'); }} style={{ width:'100%', display:'flex', alignItems:'center', gap:12, padding:'10px 4px', border:0, borderBottom:'1px solid #EDE9FE', background:'#fff', textAlign:'left' }}>
-                <span style={{ width:44, height:44, borderRadius:'50%', overflow:'hidden', background:'#7C3AED', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, flexShrink:0 }}>{member.profileImage ? <img src={member.profileImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (member.fullName || member.name || 'ব').charAt(0)}</span>
-                <span><strong style={{display:'block',color:'#1F2937'}}>{member.fullName || member.name || 'নাম নেই'}</strong><small style={{color:'#64748B'}}>{member.profession || 'ব্যাচ ২০১৪'}</small></span>
-              </button>
-            ))}
+            <h2 style={{ color:'#4C1D95', marginTop:0 }}>বন্ধু ও অনুরোধ</h2>
+            <p style={{ color:'#64748B', fontSize:12 }}>নিবন্ধিত সদস্য: {memberProfiles.length} জন • বন্ধু: {sentFriendships.length + receivedFriendships.length} জন</p>
+            <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:10}}>
+              {([['suggestions','সদস্য খুঁজুন'],['incoming','আসা অনুরোধ'],['sent','পাঠানো'],['friends','আমার বন্ধুরা']] as const).map(([key,label]) => <button key={key} onClick={()=>setFriendView(key)} style={{whiteSpace:'nowrap',border:0,borderRadius:20,padding:'8px 12px',background:friendView===key?'#6D28D9':'#F3E8FF',color:friendView===key?'#fff':'#5B21B6',fontSize:12,fontWeight:700}}>{label}{key==='incoming'&&incomingRequests.length>0?' ('+incomingRequests.length+')':key==='sent'&&outgoingRequests.length>0?' ('+outgoingRequests.length+')':''}</button>)}
+            </div>
+            {friendNotice && <p style={{background:'#F5F3FF',color:'#5B21B6',padding:9,borderRadius:8,fontSize:12}}>{friendNotice}</p>}
+            {friendView === 'suggestions' && memberProfiles.filter(m=>m.uid!==currentUser?.uid).map(member=>{
+              const isFriend=[...sentFriendships,...receivedFriendships].some(x=>x.senderUid===member.uid||x.receiverUid===member.uid);
+              const sent=outgoingRequests.some(x=>x.receiverUid===member.uid);
+              const received=incomingRequests.find(x=>x.senderUid===member.uid);
+              return <div key={member.uid} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 2px',borderBottom:'1px solid #EDE9FE'}}>
+                <button onClick={()=>{setSelectedProfile(member);setActiveTab('publicProfile');}} style={{width:44,height:44,borderRadius:'50%',overflow:'hidden',background:'#7C3AED',color:'#fff',border:0,padding:0,flexShrink:0}}>{member.profileImage?<img src={member.profileImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>:(member.fullName||member.name||'ব').charAt(0)}</button>
+                <button onClick={()=>{setSelectedProfile(member);setActiveTab('publicProfile');}} style={{flex:1,textAlign:'left',border:0,background:'transparent',padding:0}}><strong style={{display:'block',color:'#1F2937'}}>{member.fullName||member.name||'নাম নেই'}</strong><small style={{color:'#64748B'}}>{member.profession||'ব্যাচ ২০১৪'}</small></button>
+                {isFriend?<span style={{color:'#059669',fontSize:11,fontWeight:700}}>✓ বন্ধু</span>:received?<button onClick={()=>respondFriendRequest(received.id,true)} style={{border:0,borderRadius:8,padding:'7px 9px',background:'#059669',color:'#fff',fontSize:11}} disabled={friendActionBusy===received.id}>গ্রহণ</button>:<button onClick={()=>sendFriendRequest(member)} disabled={sent||friendActionBusy===member.uid} style={{border:0,borderRadius:8,padding:'7px 9px',background:sent?'#E5E7EB':'#6D28D9',color:sent?'#64748B':'#fff',fontSize:11}}>{sent?'পাঠানো হয়েছে':friendActionBusy===member.uid?'...':'＋ বন্ধু'}</button>}
+              </div>;
+            })}
+            {friendView === 'incoming' && (incomingRequests.length?incomingRequests.map(req=><div key={req.id} style={{display:'flex',alignItems:'center',gap:10,padding:'12px 2px',borderBottom:'1px solid #EDE9FE'}}><div style={{flex:1}}><strong style={{color:'#1F2937'}}>{memberProfiles.find(m=>m.uid===req.senderUid)?.fullName||req.senderName||'একজন বন্ধু'}</strong><small style={{display:'block',color:'#64748B'}}>আপনাকে বন্ধু হতে অনুরোধ করেছেন</small></div><button onClick={()=>respondFriendRequest(req.id,true)} disabled={friendActionBusy===req.id} style={{border:0,borderRadius:8,padding:'7px 10px',background:'#059669',color:'#fff'}}>গ্রহণ</button><button onClick={()=>respondFriendRequest(req.id,false)} disabled={friendActionBusy===req.id} style={{border:0,borderRadius:8,padding:'7px 10px',background:'#FEE2E2',color:'#991B1B'}}>বাতিল</button></div>):<p style={{color:'#64748B',fontSize:13}}>এখন কোনো নতুন অনুরোধ নেই।</p>)}
+            {friendView === 'sent' && (outgoingRequests.length?outgoingRequests.map(req=><div key={req.id} style={{padding:'12px 2px',borderBottom:'1px solid #EDE9FE',fontSize:13}}>{req.receiverName||'বন্ধু'} — অনুরোধ পাঠানো হয়েছে</div>):<p style={{color:'#64748B',fontSize:13}}>আপনি এখনো কাউকে অনুরোধ পাঠাননি।</p>)}
+            {friendView === 'friends' && ([...sentFriendships,...receivedFriendships].length?[...sentFriendships,...receivedFriendships].map(req=>{const friendUid=req.senderUid===currentUser?.uid?req.receiverUid:req.senderUid;const member=memberProfiles.find(m=>m.uid===friendUid);return <button key={req.id} onClick={()=>{if(member){setSelectedProfile(member);setActiveTab('publicProfile');}}} style={{width:'100%',display:'block',textAlign:'left',padding:'12px 2px',border:0,borderBottom:'1px solid #EDE9FE',background:'#fff',color:'#1F2937'}}><strong>{member?.fullName||member?.name||'বন্ধু'}</strong><small style={{display:'block',color:'#059669'}}>আপনার বন্ধু</small></button>}):<p style={{color:'#64748B',fontSize:13}}>বন্ধু তালিকা এখনো খালি। সদস্য খুঁজুন থেকে অনুরোধ পাঠান।</p>)}
           </section>
         )}
         {activeTab === 'home' && (
