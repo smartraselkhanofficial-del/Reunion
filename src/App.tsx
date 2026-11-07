@@ -3,10 +3,11 @@ import { collection, addDoc, onSnapshot, doc, setDoc, query, orderBy, limit } fr
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, User } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment } from "./types";
+import ProfilePage from './components/ProfilePage';
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
-  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile'>('home');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -14,6 +15,12 @@ export default function App() {
   const [authPhone, setAuthPhone] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authName, setAuthName] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
+  const [profileProfession, setProfileProfession] = useState('');
+  const [profileLocation, setProfileLocation] = useState('');
+  const [profileAddress, setProfileAddress] = useState('');
+  const [profileWhatsapp, setProfileWhatsapp] = useState('');
+  const [profileBio, setProfileBio] = useState('');
   const [authError, setAuthError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -119,7 +126,19 @@ export default function App() {
       const newProfile: UserProfile = {
         uid: userCred.user.uid,
         name: authName.trim(),
+        fullName: authName.trim(),
         phone: cleanPhone,
+        phoneNumber: cleanPhone,
+        email: profileEmail.trim(),
+        profession: profileProfession.trim(),
+        currentLocation: profileLocation.trim(),
+        permanentAddress: profileAddress.trim(),
+        whatsappNumber: profileWhatsapp.trim(),
+        bio: profileBio.trim(),
+        schoolName: 'সান্দিকোনা স্কুল এন্ড কলেজ',
+        batchYear: '২০১৪',
+        profileCompleted: false,
+        privacySettings: { showPhone: false, showDob: false, profileVisible: true, showProfession: true },
         tshirt: 'L',
         area: 'কেন্দুয়া',
         village: 'সান্দিকোনা',
@@ -129,7 +148,7 @@ export default function App() {
       };
       await setDoc(doc(db, "users", userCred.user.uid), newProfile);
     } catch (e) {
-      setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে।');
+      setAuthError('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। নম্বরটি আগে ব্যবহার করা হয়েছে কি না বা ইন্টারনেট সংযোগ পরীক্ষা করুন।');
     } finally { setIsProcessing(false); }
   };
 
@@ -213,7 +232,16 @@ export default function App() {
           {appStage !== 'welcome' && (
             <form onSubmit={appStage === 'login' ? handleLogin : handleSignUp} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {appStage === 'signup' && (
-                <input required type="text" placeholder="আপনার পূর্ণ নাম" value={authName} onChange={e => setAuthName(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                <>
+                  <input required type="text" placeholder="আপনার পূর্ণ নাম" value={authName} onChange={e => setAuthName(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <input type="email" placeholder="ইমেইল (ঐচ্ছিক)" value={profileEmail} onChange={e => setProfileEmail(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <input type="text" placeholder="পেশা" value={profileProfession} onChange={e => setProfileProfession(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <input type="text" placeholder="বর্তমান ঠিকানা" value={profileLocation} onChange={e => setProfileLocation(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <input type="text" placeholder="স্থায়ী ঠিকানা / গ্রাম" value={profileAddress} onChange={e => setProfileAddress(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <input type="tel" placeholder="WhatsApp নম্বর" value={profileWhatsapp} onChange={e => setProfileWhatsapp(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
+                  <textarea placeholder="নিজের সম্পর্কে কিছু লিখুন" value={profileBio} onChange={e => setProfileBio(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', minHeight: '70px', outline: 'none' }} />
+                  <div style={{ fontSize: '11px', color: '#6D28D9', background: '#F5F3FF', padding: '9px', borderRadius: '8px' }}>স্কুল: সান্দিকোনা স্কুল এন্ড কলেজ • ব্যাচ: ২০১৪। বাকি তথ্য ও ছবি পরে প্রোফাইল থেকে যোগ করতে পারবেন।</div>
+                </>
               )}
               <input required type="tel" placeholder="মোবাইল নম্বর (017XXXXXXXX)" value={authPhone} onChange={e => setAuthPhone(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
               <input required type="password" placeholder="পাসওয়ার্ড" value={authPassword} onChange={e => setAuthPassword(e.target.value)} style={{ padding: '10px', borderRadius: '8px', border: '1px solid #CBD5E1', outline: 'none' }} />
@@ -277,8 +305,8 @@ export default function App() {
           
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>💬</span>
           
-          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', border: '2px solid #fff', cursor: 'pointer' }}>
-            {(userProfile?.name || 'স').charAt(0)}
+          <div onClick={() => setActiveTab('profile')} title="আমার প্রোফাইল" style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', border: '2px solid #fff', cursor: 'pointer' }}>{userProfile?.profileImage ? <img src={userProfile.profileImage} alt="প্রোফাইল" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> :
+            {(userProfile?.name || userProfile?.fullName || 'স').charAt(0)}</div>}
           </div>
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>⋮</span>
         </div>
@@ -287,6 +315,7 @@ export default function App() {
       <main style={{ maxWidth: '600px', margin: '0 auto', padding: '12px' }}>
         
         {/* HOMEPAGE ONLY */}
+        {activeTab === 'profile' && currentUser && userProfile && <ProfilePage userId={currentUser.uid} profile={userProfile} onBack={() => setActiveTab('home')} />}
         {activeTab === 'home' && (
           <div>
             {/* 2. WELCOME BANNER */}
