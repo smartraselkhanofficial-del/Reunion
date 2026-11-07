@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../firebase';
+import { db } from '../firebase';
+import { getStorageUserId, supabase } from '../supabase';
 import { UserProfile } from '../types';
 
 type Props = { userId: string; profile: UserProfile; onBack: () => void };
@@ -52,27 +52,23 @@ export default function ProfilePage({ userId, profile, onBack }: Props) {
 
   const uploadImage = async (file: File, kind: 'profile' | 'cover') => {
     if (file.size > 5 * 1024 * 1024) throw new Error('ছবির আকার ৫ MB-এর কম হতে হবে।');
+    const storageUserId = await getStorageUserId();
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const imageRef = ref(storage, 'userProfiles/' + userId + '/' + kind + '_' + Date.now() + '_' + safeName);
-    return await new Promise<string>((resolve, reject) => {
-      const task = uploadBytesResumable(imageRef, file, { contentType: file.type || 'image/jpeg' });
-      const timeout = window.setTimeout(() => {
-        task.cancel();
-        reject(new Error('ছবি আপলোড হতে ৬০ সেকেন্ডের বেশি লাগছে। ইন্টারনেট বা Firebase Storage Rules পরীক্ষা করুন।'));
-      }, 60000);
-      task.on('state_changed',
-        snapshot => {
-          const percent = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-          setProgressText((kind === 'profile' ? 'প্রোফাইল ছবি' : 'কভার ছবি') + ' আপলোড হচ্ছে ' + percent + '%');
-        },
-        error => { window.clearTimeout(timeout); reject(error); },
-        async () => {
-          window.clearTimeout(timeout);
-          try { resolve(await getDownloadURL(task.snapshot.ref)); }
-          catch (error) { reject(error); }
-        }
-      );
-    });
+    const imagePath = storageUserId + '/' + kind + '_' + Date.now() + '_' + safeName;
+    setProgressText((kind === 'profile' ? 'প্রোফাইল ছবি' : 'কভার ছবি') + ' আপলোড হচ্ছে...');
+    const { data, error } = await supabase.storage
+      .from('profile-images')
+      .upload(imagePath, file, {
+        contentType: file.type || 'image/jpeg',
+        upsert: true
+      });
+    if (error) throw error;
+    setProgressText((kind === 'profile' ? 'প্রোফাইল ছবি' : 'কভার ছবি') + ' আপলোড সম্পন্ন');
+    const { data: publicData } = supabase.storage
+      .from('profile-images')
+      .getPublicUrl(data.path);
+    if (!publicData.publicUrl) throw new Error('ছবির লিংক তৈরি করা যায়নি।');
+    return publicData.publicUrl;
   };
 
   const save = async (e: React.FormEvent) => {
