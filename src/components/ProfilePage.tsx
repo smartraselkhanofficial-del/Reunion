@@ -60,7 +60,7 @@ export default function ProfilePage({ userId, profile, onBack }: Props) {
       .from('profile-images')
       .upload(imagePath, file, {
         contentType: file.type || 'image/jpeg',
-        upsert: true
+        upsert: false
       });
     if (error) throw error;
     setProgressText((kind === 'profile' ? 'প্রোফাইল ছবি' : 'কভার ছবি') + ' আপলোড সম্পন্ন');
