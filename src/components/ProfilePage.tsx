@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { UserProfile } from '../types';
 
@@ -26,6 +26,7 @@ export default function ProfilePage({ userId, profile, onBack }: Props) {
   const [cover, setCover] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [progressText, setProgressText] = useState('');
 
   useEffect(() => {
     setForm({
@@ -53,36 +54,64 @@ export default function ProfilePage({ userId, profile, onBack }: Props) {
     if (file.size > 5 * 1024 * 1024) throw new Error('ছবির আকার ৫ MB-এর কম হতে হবে।');
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const imageRef = ref(storage, 'userProfiles/' + userId + '/' + kind + '_' + Date.now() + '_' + safeName);
-    await uploadBytes(imageRef, file, { contentType: file.type });
-    return await getDownloadURL(imageRef);
+    return await new Promise<string>((resolve, reject) => {
+      const task = uploadBytesResumable(imageRef, file, { contentType: file.type || 'image/jpeg' });
+      const timeout = window.setTimeout(() => {
+        task.cancel();
+        reject(new Error('ছবি আপলোড হতে ৬০ সেকেন্ডের বেশি লাগছে। ইন্টারনেট বা Firebase Storage Rules পরীক্ষা করুন।'));
+      }, 60000);
+      task.on('state_changed',
+        snapshot => {
+          const percent = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+          setProgressText((kind === 'profile' ? 'প্রোফাইল ছবি' : 'কভার ছবি') + ' আপলোড হচ্ছে ' + percent + '%');
+        },
+        error => { window.clearTimeout(timeout); reject(error); },
+        async () => {
+          window.clearTimeout(timeout);
+          try { resolve(await getDownloadURL(task.snapshot.ref)); }
+          catch (error) { reject(error); }
+        }
+      );
+    });
   };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setMessage('');
+    setProgressText('তথ্য সংরক্ষণ হচ্ছে...');
     try {
-      let profileImage = profile.profileImage || '';
-      let coverImage = profile.coverImage || '';
-      if (photo) profileImage = await uploadImage(photo, 'profile');
-      if (cover) coverImage = await uploadImage(cover, 'cover');
+      // আগে তথ্য সংরক্ষণ করি, যাতে ছবি আপলোডে সমস্যা হলেও লেখা তথ্য হারিয়ে না যায়।
       const updated = {
         ...form,
         name: form.fullName,
         phone: form.phoneNumber,
-        profileImage: profileImage || null,
-        coverImage: coverImage || null,
         profileCompleted: Boolean(form.fullName.trim() && form.phoneNumber.trim()),
         updatedAt: Date.now()
       };
       await setDoc(doc(db, 'users', userId), updated, { merge: true });
+
+      let profileImage = profile.profileImage || '';
+      let coverImage = profile.coverImage || '';
+      if (photo) profileImage = await uploadImage(photo, 'profile');
+      if (cover) coverImage = await uploadImage(cover, 'cover');
+
+      if (photo || cover) {
+        setProgressText('ছবির লিংক সংরক্ষণ হচ্ছে...');
+        await setDoc(doc(db, 'users', userId), {
+          ...(photo ? { profileImage } : {}),
+          ...(cover ? { coverImage } : {}),
+          updatedAt: Date.now()
+        }, { merge: true });
+      }
       setPhoto(null);
       setCover(null);
-      setMessage('আপনার প্রোফাইল সফলভাবে সংরক্ষণ হয়েছে।');
+      setMessage('আপনার তথ্য ও ছবি সফলভাবে সংরক্ষণ হয়েছে।');
+      setProgressText('');
     } catch (err: any) {
-      setMessage(err?.code === 'storage/unauthorized'
-        ? 'ছবি আপলোডের অনুমতি Firebase Storage-এ চালু নেই। Firebase Storage Rules ঠিক করতে হবে।'
-        : (err?.message || 'সংরক্ষণ করা যায়নি। আবার চেষ্টা করুন।'));
+      const detail = err?.code ? err.code + ': ' : '';
+      setMessage('সংরক্ষণে সমস্যা: ' + detail + (err?.message || 'আবার চেষ্টা করুন।'));
+      setProgressText('');
     } finally {
       setSaving(false);
     }
@@ -120,6 +149,7 @@ export default function ProfilePage({ userId, profile, onBack }: Props) {
         <label><span style={labelStyle}>Facebook প্রোফাইল লিংক</span><input type="url" value={form.facebookUrl} onChange={e => change('facebookUrl', e.target.value)} style={fieldStyle} /></label>
         <label><span style={labelStyle}>নিজের সম্পর্কে</span><textarea value={form.bio} onChange={e => change('bio', e.target.value)} rows={3} style={{ ...fieldStyle, resize: 'vertical' }} /></label>
         <div style={{ background: '#EDE9FE', padding: '10px', borderRadius: '10px', color: '#5B21B6', fontSize: '12px' }}>প্রতিষ্ঠান: {form.schoolName} • ব্যাচ: {form.batchYear}</div>
+        {progressText && <div style={{ padding: '10px', borderRadius: '9px', background: '#EDE9FE', color: '#5B21B6', fontSize: '12px' }}>{progressText}</div>}
         {message && <div style={{ padding: '10px', borderRadius: '9px', background: message.includes('সফল') ? '#DCFCE7' : '#FEE2E2', color: message.includes('সফল') ? '#166534' : '#991B1B', fontSize: '12px' }}>{message}</div>}
         <button type="submit" disabled={saving} style={{ background: 'linear-gradient(135deg,#6D28D9,#4338CA)', color: '#fff', border: 0, borderRadius: '10px', padding: '13px', fontWeight: 800, fontSize: '14px' }}>{saving ? 'সংরক্ষণ হচ্ছে...' : 'প্রোফাইল সংরক্ষণ করুন'}</button>
       </form>
