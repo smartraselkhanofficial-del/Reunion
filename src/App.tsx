@@ -7,10 +7,12 @@ import ProfilePage from './components/ProfilePage';
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
-  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile' | 'friends' | 'publicProfile'>('home');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [memberProfiles, setMemberProfiles] = useState<UserProfile[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
 
   const [authPhone, setAuthPhone] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -83,6 +85,9 @@ export default function App() {
   // 3. Realtime Database Listeners
   useEffect(() => {
     if (appStage !== 'main') return;
+    const unsubMembers = onSnapshot(collection(db, "users"), (snap) => {
+      setMemberProfiles(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
+    });
     const unsubPosts = onSnapshot(query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(20)), (snap) => {
       const list: PostItem[] = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() } as PostItem));
@@ -91,7 +96,7 @@ export default function App() {
     const unsubConfig = onSnapshot(doc(db, "settings", "app_config"), (d) => {
       if (d.exists() && d.data()?.announcement) setAnnouncement(d.data().announcement);
     });
-    return () => { unsubPosts(); unsubConfig(); };
+    return () => { unsubMembers(); unsubPosts(); unsubConfig(); };
   }, [appStage]);
 
   useEffect(() => {
@@ -161,6 +166,7 @@ export default function App() {
       await addDoc(collection(db, "posts"), {
         authorUid: currentUser.uid,
         authorName: userProfile.name || userProfile.fullName || 'বন্ধু',
+        authorImage: userProfile.profileImage || '',
         authorVillage: userProfile.village || userProfile.area || userProfile.permanentAddress || 'সান্দিকোনা',
         content: newPostText.trim(),
         likes: [],
@@ -314,6 +320,19 @@ export default function App() {
         
         {/* HOMEPAGE ONLY */}
         {activeTab === 'profile' && currentUser && userProfile && <ProfilePage userId={currentUser.uid} profile={userProfile} onBack={() => setActiveTab('home')} />}
+        {activeTab === 'publicProfile' && selectedProfile && <PublicProfilePage profile={selectedProfile} onBack={() => { setSelectedProfile(null); setActiveTab('home'); }} />}
+        {activeTab === 'friends' && (
+          <section style={{ background:'#fff', borderRadius:16, padding:14 }}>
+            <h2 style={{ color:'#4C1D95', marginTop:0 }}>আমাদের বন্ধুরা</h2>
+            <p style={{ color:'#64748B', fontSize:12 }}>নিবন্ধিত সদস্য: {memberProfiles.length} জন</p>
+            {memberProfiles.filter(m => m.uid !== currentUser?.uid).map(member => (
+              <button key={member.uid} onClick={() => { setSelectedProfile(member); setActiveTab('publicProfile'); }} style={{ width:'100%', display:'flex', alignItems:'center', gap:12, padding:'10px 4px', border:0, borderBottom:'1px solid #EDE9FE', background:'#fff', textAlign:'left' }}>
+                <span style={{ width:44, height:44, borderRadius:'50%', overflow:'hidden', background:'#7C3AED', color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:800, flexShrink:0 }}>{member.profileImage ? <img src={member.profileImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (member.fullName || member.name || 'ব').charAt(0)}</span>
+                <span><strong style={{display:'block',color:'#1F2937'}}>{member.fullName || member.name || 'নাম নেই'}</strong><small style={{color:'#64748B'}}>{member.profession || 'ব্যাচ ২০১৪'}</small></span>
+              </button>
+            ))}
+          </section>
+        )}
         {activeTab === 'home' && (
           <div>
             {/* 2. WELCOME BANNER */}
@@ -396,12 +415,12 @@ export default function App() {
                     {/* Post Header */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#6D28D9', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', position: 'relative' }}>
-                          {(post.authorName || 'ব').charAt(0)}
+                        <button onClick={() => { const author = memberProfiles.find(m => m.uid === post.authorUid); if (author) { setSelectedProfile(author); setActiveTab('publicProfile'); } }} style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#6D28D9', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', position: 'relative', overflow:'hidden', padding:0, border:0, cursor:'pointer', flexShrink:0 }}>
+                          {(memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage) ? <img src={memberProfiles.find(m => m.uid === post.authorUid)?.profileImage || post.authorImage} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (post.authorName || 'ব').charAt(0)}
                           <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', background: '#22C55E', borderRadius: '50%', border: '2px solid #fff' }}></span>
-                        </div>
+                        </button>
                         <div>
-                          <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#050505', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <h4 onClick={() => { const author = memberProfiles.find(m => m.uid === post.authorUid); if (author) { setSelectedProfile(author); setActiveTab('publicProfile'); } }} style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#050505', display: 'flex', alignItems: 'center', gap: '4px', cursor:'pointer' }}>
                             {post.authorName || 'অজানা বন্ধু'} <span style={{ color: '#0866FF', fontSize: '12px' }}>✔</span>
                           </h4>
                           <span style={{ fontSize: '11px', color: '#65676B' }}>{post.dateStr || 'সময় উল্লেখ নেই'} • 🌎</span>
@@ -454,7 +473,7 @@ export default function App() {
         <button onClick={() => setActiveTab('home')} style={{ border: 'none', background: 'none', color: activeTab === 'home' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🏠</span><span>হোম</span>
         </button>
-        <button onClick={() => alert('বন্ধু সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => setActiveTab('friends')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>👥</span><span>বন্ধু</span>
         </button>
         <button onClick={() => alert('স্মৃতি সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
