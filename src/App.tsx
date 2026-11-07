@@ -306,7 +306,6 @@ export default function App() {
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>💬</span>
           
           <div onClick={() => setActiveTab('profile')} title="আমার প্রোফাইল" style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', border: '2px solid #fff', cursor: 'pointer' }}>{userProfile?.profileImage ? <img src={userProfile.profileImage} alt="প্রোফাইল" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (userProfile?.name || userProfile?.fullName || 'স').charAt(0)}</div>
-          </div>
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>⋮</span>
         </div>
       </header>
