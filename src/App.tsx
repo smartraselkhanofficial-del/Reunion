@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, doc, setDoc, deleteDoc, query, orderBy, limit } from "firebase/firestore";
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from "firebase/auth";
+import React, { useState, useEffect } from 'react';
+import { collection, addDoc, onSnapshot, doc, setDoc, query, orderBy, limit } from "firebase/firestore";
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, User } from "firebase/auth";
 import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment } from "./types";
-import ChatRoom from "./components/ChatRoom";
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
@@ -142,8 +141,8 @@ export default function App() {
     try {
       await addDoc(collection(db, "posts"), {
         authorUid: currentUser.uid,
-        authorName: userProfile.name,
-        authorVillage: userProfile.village || userProfile.area,
+        authorName: userProfile.name || userProfile.fullName || 'বন্ধু',
+        authorVillage: userProfile.village || userProfile.area || userProfile.permanentAddress || 'সান্দিকোনা',
         content: newPostText.trim(),
         likes: [],
         commentsCount: 0,
@@ -156,8 +155,9 @@ export default function App() {
 
   const handleToggleLike = async (post: PostItem) => {
     if (!currentUser) return;
-    const isLiked = post.likes.includes(currentUser.uid);
-    const updatedLikes = isLiked ? post.likes.filter(id => id !== currentUser.uid) : [...post.likes, currentUser.uid];
+    const likes = post.likes || [];
+    const isLiked = likes.includes(currentUser.uid);
+    const updatedLikes = isLiked ? likes.filter(id => id !== currentUser.uid) : [...likes, currentUser.uid];
     await setDoc(doc(db, "posts", post.id), { likes: updatedLikes }, { merge: true });
   };
 
@@ -165,7 +165,7 @@ export default function App() {
     e.preventDefault();
     if (!currentUser || !userProfile || !commentInput.trim()) return;
     try {
-      await addDoc(collection(db, "posts", postId, "comments"), { authorName: userProfile.name, authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
+      await addDoc(collection(db, "posts", postId, "comments"), { authorName: (userProfile.name || userProfile.fullName || 'বন্ধু'), authorUid: currentUser.uid, text: commentInput.trim(), timestamp: Date.now() });
       const target = posts.find(p => p.id === postId);
       if (target) await setDoc(doc(db, "posts", postId), { commentsCount: (target.commentsCount || 0) + 1 }, { merge: true });
       setCommentInput('');
@@ -363,21 +363,21 @@ export default function App() {
             {/* 6. NEWS FEED */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {posts.map(post => {
-                const isLiked = currentUser && post.likes.includes(currentUser.uid);
+                const isLiked = currentUser && (post.likes || []).includes(currentUser.uid);
                 return (
                   <div key={post.id} style={{ background: '#fff', borderRadius: '16px', padding: '14px', border: '1px solid #E4E6EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                     {/* Post Header */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#6D28D9', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '16px', position: 'relative' }}>
-                          {post.authorName.charAt(0)}
+                          {(post.authorName || 'ব').charAt(0)}
                           <span style={{ position: 'absolute', bottom: 0, right: 0, width: '10px', height: '10px', background: '#22C55E', borderRadius: '50%', border: '2px solid #fff' }}></span>
                         </div>
                         <div>
                           <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 'bold', color: '#050505', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            {post.authorName} <span style={{ color: '#0866FF', fontSize: '12px' }}>✔</span>
+                            {post.authorName || 'অজানা বন্ধু'} <span style={{ color: '#0866FF', fontSize: '12px' }}>✔</span>
                           </h4>
-                          <span style={{ fontSize: '11px', color: '#65676B' }}>{post.dateStr} • 🌎</span>
+                          <span style={{ fontSize: '11px', color: '#65676B' }}>{post.dateStr || 'সময় উল্লেখ নেই'} • 🌎</span>
                         </div>
                       </div>
                       <span style={{ color: '#65676B', cursor: 'pointer', fontSize: '18px' }}>⋮</span>
@@ -390,7 +390,7 @@ export default function App() {
                     
                     {/* Post Stats */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#65676B', borderBottom: '1px solid #E4E6EB', paddingBottom: '8px', marginBottom: '8px' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>❤️👍 {post.likes.length}</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>❤️👍 {(post.likes || []).length}</span>
                       <span>{post.commentsCount} মন্তব্য</span>
                     </div>
 
@@ -439,7 +439,7 @@ export default function App() {
         <button onClick={() => alert('বিদ্যালয় সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🏫</span><span>বিদ্যালয়</span>
         </button>
-        <button onClick={() => setActiveTab('chat')} style={{ border: 'none', background: 'none', color: activeTab === 'chat' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
+        <button onClick={() => setActiveTab('community')} style={{ border: 'none', background: 'none', color: activeTab === 'community' ? '#7C3AED' : '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
           <span style={{ fontSize: '18px' }}>🌐</span><span>কমিউনিটি</span>
         </button>
         <button onClick={() => alert('যোগাযোগ সেকশন')} style={{ border: 'none', background: 'none', color: '#65676B', fontSize: '9px', fontWeight: 'bold', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
@@ -447,45 +447,5 @@ export default function App() {
         </button>
       </nav>
     </div>
-  );
-}
-import React, { useState, useEffect } from 'react';
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "./firebase";
-import { 
-  // আপনার বিদ্যমান অন্যান্য ইমপোর্ট...
-} from "firebase/firestore";
-
-export default function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-
-  // Auth লিসেনার (অ্যাপ খোলার সাথে সাথে চেক)
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setIsAuthLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  if (isAuthLoading) {
-    return <div style={{textAlign: 'center', marginTop: '50%'}}>Loading...</div>; // আপনি চাইলে প্রিমিয়াম স্প্ল্যাশ স্ক্রিন দিন
-  }
-
-  // যদি লগইন করা না থাকে, তবে শুধু Login/Signup স্ক্রিন দেখাবে
-  if (!currentUser) {
-    return <AuthScreen />;
-  }
-
-  // যদি লগইন করা থাকে, তবেই মেইন অ্যাপ দেখাবে
-  return <MainApplication />;
-}
-
-// আপনার বর্তমান হোমপেজ ও অন্যান্য ফিচারগুলো MainApplication কম্পোনেন্টে থাকবে
-function MainApplication() {
-  // আপনার বিদ্যমান অ্যাপের সব ডিজাইন, নেভিগেশন ও লজিক এখানে থাকবে
-  return (
-    // ... আপনার বর্তমান হোমপেজ কোড
   );
 }
