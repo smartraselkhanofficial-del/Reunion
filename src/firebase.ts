@@ -1,6 +1,6 @@
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
-import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";\nimport { getStorage } from "firebase/storage";
 
 // ১. আপনার বিদ্যমান ফায়ারবেস প্রোডাকশন কনফিগারেশন
 export const firebaseConfig = {
@@ -16,7 +16,7 @@ export const firebaseConfig = {
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApps()[0];
 
 // ৩. Database এবং Auth ইন্সট্যান্স তৈরি
-export const db = getFirestore(app);
+export const db = getFirestore(app);\nexport const storage = getStorage(app);
 export const auth = getAuth(app);
 
 // ৪. Persistent Session Promise
