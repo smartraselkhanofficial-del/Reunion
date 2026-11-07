@@ -4,6 +4,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndP
 import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment } from "./types";
 import ProfilePage from './components/ProfilePage';
+import PublicProfilePage from './components/PublicProfilePage';
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
