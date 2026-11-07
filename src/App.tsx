@@ -5,15 +5,17 @@ import { db, auth } from "./firebase";
 import { UserProfile, PostItem, PostComment } from "./types";
 import ProfilePage from './components/ProfilePage';
 import PublicProfilePage from './components/PublicProfilePage';
+import ChatPage from './components/ChatPage';
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
-  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile' | 'publicProfile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile' | 'publicProfile' | 'chat'>('home');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [memberProfiles, setMemberProfiles] = useState<UserProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
+  const [selectedChatFriend, setSelectedChatFriend] = useState<UserProfile | null>(null);
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<any[]>([]);
   const [sentFriendships, setSentFriendships] = useState<any[]>([]);
@@ -379,6 +381,7 @@ export default function App() {
         {/* HOMEPAGE ONLY */}
         {activeTab === 'profile' && currentUser && userProfile && <ProfilePage userId={currentUser.uid} profile={userProfile} onBack={() => setActiveTab('home')} />}
         {activeTab === 'publicProfile' && selectedProfile && <PublicProfilePage profile={selectedProfile} onBack={() => { setSelectedProfile(null); setActiveTab('home'); }} />}
+        {activeTab === 'chat' && currentUser && selectedChatFriend && <ChatPage currentUser={currentUser} currentProfile={userProfile} friend={selectedChatFriend} onBack={() => setActiveTab('friends')} />}
         {activeTab === 'friends' && (
           <section style={{ background:'#fff', borderRadius:16, padding:14 }}>
             <h2 style={{ color:'#4C1D95', marginTop:0 }}>বন্ধু ও অনুরোধ</h2>
@@ -399,7 +402,7 @@ export default function App() {
             })}
             {friendView === 'incoming' && (incomingRequests.length?incomingRequests.map(req=><div key={req.id} style={{display:'flex',alignItems:'center',gap:10,padding:'12px 2px',borderBottom:'1px solid #EDE9FE'}}><div style={{flex:1}}><strong style={{color:'#1F2937'}}>{memberProfiles.find(m=>m.uid===req.senderUid)?.fullName||req.senderName||'একজন বন্ধু'}</strong><small style={{display:'block',color:'#64748B'}}>আপনাকে বন্ধু হতে অনুরোধ করেছেন</small></div><button onClick={()=>respondFriendRequest(req.id,true)} disabled={friendActionBusy===req.id} style={{border:0,borderRadius:8,padding:'7px 10px',background:'#059669',color:'#fff'}}>গ্রহণ</button><button onClick={()=>respondFriendRequest(req.id,false)} disabled={friendActionBusy===req.id} style={{border:0,borderRadius:8,padding:'7px 10px',background:'#FEE2E2',color:'#991B1B'}}>বাতিল</button></div>):<p style={{color:'#64748B',fontSize:13}}>এখন কোনো নতুন অনুরোধ নেই।</p>)}
             {friendView === 'sent' && (outgoingRequests.length?outgoingRequests.map(req=><div key={req.id} style={{padding:'12px 2px',borderBottom:'1px solid #EDE9FE',fontSize:13}}>{req.receiverName||'বন্ধু'} — অনুরোধ পাঠানো হয়েছে</div>):<p style={{color:'#64748B',fontSize:13}}>আপনি এখনো কাউকে অনুরোধ পাঠাননি।</p>)}
-            {friendView === 'friends' && ([...sentFriendships,...receivedFriendships].length?[...sentFriendships,...receivedFriendships].map(req=>{const friendUid=req.senderUid===currentUser?.uid?req.receiverUid:req.senderUid;const member=memberProfiles.find(m=>m.uid===friendUid);return <button key={req.id} onClick={()=>{if(member){setSelectedProfile(member);setActiveTab('publicProfile');}}} style={{width:'100%',display:'block',textAlign:'left',padding:'12px 2px',border:0,borderBottom:'1px solid #EDE9FE',background:'#fff',color:'#1F2937'}}><strong>{member?.fullName||member?.name||'বন্ধু'}</strong><small style={{display:'block',color:'#059669'}}>আপনার বন্ধু</small></button>}):<p style={{color:'#64748B',fontSize:13}}>বন্ধু তালিকা এখনো খালি। সদস্য খুঁজুন থেকে অনুরোধ পাঠান।</p>)}
+            {friendView === 'friends' && ([...sentFriendships,...receivedFriendships].length?[...sentFriendships,...receivedFriendships].map(req=>{const friendUid=req.senderUid===currentUser?.uid?req.receiverUid:req.senderUid;const member=memberProfiles.find(m=>m.uid===friendUid);return <div key={req.id} style={{display:'flex',alignItems:'center',gap:8,padding:'12px 2px',borderBottom:'1px solid #EDE9FE'}}><button onClick={()=>{if(member){setSelectedProfile(member);setActiveTab('publicProfile');}}} style={{flex:1,display:'block',textAlign:'left',padding:0,border:0,background:'#fff',color:'#1F2937'}}><strong>{member?.fullName||member?.name||'বন্ধু'}</strong><small style={{display:'block',color:'#059669'}}>আপনার বন্ধু</small></button>{member && <button onClick={()=>{setSelectedChatFriend(member);setActiveTab('chat');}} style={{border:0,borderRadius:18,padding:'8px 13px',background:'#6D28D9',color:'#fff',fontSize:12,fontWeight:700}}>💬 চ্যাট</button>}</div>}):<p style={{color:'#64748B',fontSize:13}}>বন্ধু তালিকা এখনো খালি। সদস্য খুঁজুন থেকে অনুরোধ পাঠান।</p>)}
           </section>
         )}
         {activeTab === 'home' && (
