@@ -156,10 +156,16 @@ export default function ChatPage({ currentUser, currentProfile, friend, onBack }
         streamRef.current = null;
         recorderRef.current = null;
         setRecording(false);
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        if (!blob.size) return;
-        const ext = blob.type.includes('mp4') ? 'm4a' : blob.type.includes('ogg') ? 'ogg' : 'webm';
-        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
+        const rawMime = recorder.mimeType || 'audio/webm';
+        const mimeType = rawMime.split(';')[0].trim().toLowerCase();
+        const blob = new Blob(chunks, { type: mimeType });
+        if (!blob.size) {
+          setNotice('রেকর্ডিংয়ে কোনো শব্দ পাওয়া যায়নি। আবার রেকর্ড করুন।');
+          return;
+        }
+        const ext = mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : 'webm';
+        const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: mimeType });
+        setNotice('ভয়েস মেসেজ পাঠানো হচ্ছে...');
         await uploadMedia(file, 'audio');
       };
       recorderRef.current = recorder;
