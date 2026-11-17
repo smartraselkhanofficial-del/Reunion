@@ -6,12 +6,14 @@ import { UserProfile, PostItem, PostComment } from "./types";
 import ProfilePage from './components/ProfilePage';
 import PublicProfilePage from './components/PublicProfilePage';
 import ChatPage from './components/ChatPage';
+import VoiceRoom from './components/VoiceRoom';
 
 export default function App() {
   const [appStage, setAppStage] = useState<'splash' | 'welcome' | 'login' | 'signup' | 'main'>('splash');
   const [activeTab, setActiveTab] = useState<'home' | 'friends' | 'memories' | 'pride' | 'school' | 'community' | 'contact' | 'profile' | 'publicProfile' | 'chat'>('home');
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [showVoiceRoom, setShowVoiceRoom] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [memberProfiles, setMemberProfiles] = useState<UserProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<UserProfile | null>(null);
@@ -370,6 +372,7 @@ export default function App() {
           </div>
           
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>💬</span>
+          <button type="button" onClick={() => setShowVoiceRoom(true)} title="লাইভ ভয়েস রুম" aria-label="লাইভ ভয়েস রুম" style={{ border: 0, background: 'rgba(255,255,255,0.16)', color: '#fff', borderRadius: 18, padding: '5px 8px', fontSize: 16, cursor: 'pointer' }}>🎙️</button>
           
           <div onClick={() => setActiveTab('profile')} title="আমার প্রোফাইল" style={{ width: '32px', height: '32px', borderRadius: '50%', overflow: 'hidden', background: '#10B981', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', border: '2px solid #fff', cursor: 'pointer' }}>{userProfile?.profileImage ? <img src={userProfile.profileImage} alt="প্রোফাইল" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (userProfile?.name || userProfile?.fullName || 'স').charAt(0)}</div>
           <span style={{ fontSize: '18px', cursor: 'pointer' }}>⋮</span>
@@ -539,6 +542,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {showVoiceRoom && currentUser && userProfile && <VoiceRoom currentUser={currentUser} userProfile={userProfile} onClose={() => setShowVoiceRoom(false)} />}
 
       {/* 🧭 BOTTOM NAVIGATION (7 Tabs) */}
       <nav style={{ position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFFFFF', borderTop: '1px solid #E4E6EB', display: 'flex', justifyContent: 'space-around', padding: '8px 0', zIndex: 1000, boxShadow: '0 -2px 10px rgba(0,0,0,0.05)' }}>
