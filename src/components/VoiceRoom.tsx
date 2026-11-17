@@ -1,14 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  collection, 
-  onSnapshot, 
-  doc, 
-  setDoc, 
-  deleteDoc 
-} from "firebase/firestore";
-import { User } from "firebase/auth";
-import { db } from "../firebase";
-import { UserProfile } from "../types";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { collection, deleteDoc, doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { User } from 'firebase/auth';
+import { Room, RoomEvent, Track, RemoteParticipant } from 'livekit-client';
+import { db } from '../firebase';
+import { UserProfile } from '../types';
 
 interface VoiceRoomProps {
   currentUser: User | null;
@@ -22,306 +17,211 @@ interface Participant {
   village: string;
   isMuted: boolean;
   isHandRaised: boolean;
-  isSpeaking: boolean;
   joinedAt: number;
 }
+
+const ROOM_ID = 'ssc_2014_main';
+const TOKEN_SERVICE_URL = 'https://ssc-batch-2014-voice-token.nurejannattv24.workers.dev';
 
 export default function VoiceRoom({ currentUser, userProfile, onClose }: VoiceRoomProps) {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
-  const [isSpeakingLocally, setIsSpeakingLocally] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [error, setError] = useState('');
   const [roomDuration, setRoomDuration] = useState(0);
+  const roomRef = useRef<Room | null>(null);
+  const audioElementsRef = useRef<HTMLAudioElement[]>([]);
 
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const timerRef = useRef<any>(null);
-
-  // রুম কানেকশন ও মাইক্রোফোন ইনিশিয়ালাইজেশন
   useEffect(() => {
-    if (!currentUser || !userProfile) return;
+    const unsubscribe = onSnapshot(
+      collection(db, 'voice_rooms', ROOM_ID, 'participants'),
+      (snapshot) => setParticipants(snapshot.docs.map((item) => item.data() as Participant)),
+      (err) => setError('সদস্য তালিকা লোড হয়নি: ' + err.message)
+    );
+    return () => unsubscribe();
+  }, []);
 
-    let cleanupStream: MediaStream | null = null;
+  useEffect(() => {
+    if (!isConnected) return;
+    const timer = window.setInterval(() => setRoomDuration((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isConnected]);
 
-    // ১. ডিভাইসের মাইক্রোফোন ধরা ও কথা বললে পালস ডিটেক্ট করা
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then((stream) => {
-        localStreamRef.current = stream;
-        cleanupStream = stream;
+  const removeAudioElements = useCallback(() => {
+    audioElementsRef.current.forEach((element) => {
+      element.pause();
+      element.srcObject = null;
+      element.remove();
+    });
+    audioElementsRef.current = [];
+  }, []);
 
-        // অডিও এনালাইজার দিয়ে কথা বলা শনাক্ত
-        try {
-          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          const ctx = new AudioCtx();
-          const analyser = ctx.createAnalyser();
-          const microphone = ctx.createMediaStreamSource(stream);
-          microphone.connect(analyser);
-          analyser.fftSize = 256;
-          audioContextRef.current = ctx;
-          analyserRef.current = analyser;
+  const leaveRoom = useCallback(async () => {
+    const room = roomRef.current;
+    roomRef.current = null;
+    if (room) {
+      try { await room.disconnect(); } catch (e) { /* ignore disconnect cleanup errors */ }
+    }
+    removeAudioElements();
+    if (currentUser) {
+      await deleteDoc(doc(db, 'voice_rooms', ROOM_ID, 'participants', currentUser.uid)).catch(() => {});
+    }
+    setIsConnected(false);
+    setIsMuted(false);
+  }, [currentUser, removeAudioElements]);
 
-          const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          const checkSpeaking = () => {
-            if (!analyserRef.current) return;
-            analyserRef.current.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
-            const avg = sum / dataArray.length;
-            const speaking = avg > 25 && !isMuted;
-            setIsSpeakingLocally(speaking);
-            requestAnimationFrame(checkSpeaking);
-          };
-          checkSpeaking();
-        } catch (e) {}
+  useEffect(() => () => {
+    const room = roomRef.current;
+    roomRef.current = null;
+    if (room) void room.disconnect();
+    removeAudioElements();
+    if (currentUser) {
+      void deleteDoc(doc(db, 'voice_rooms', ROOM_ID, 'participants', currentUser.uid)).catch(() => {});
+    }
+  }, [currentUser, removeAudioElements]);
 
-        // ২. ফায়ারবেসে পার্টিসিপেন্ট হিসেবে নিজেকে যুক্ত করা
-        setDoc(doc(db, "voice_rooms", "ssc_2014_main", "participants", currentUser.uid), {
-          uid: currentUser.uid,
-          name: userProfile.name,
-          village: userProfile.village || userProfile.area,
-          isMuted: false,
-          isHandRaised: false,
-          joinedAt: Date.now()
+  const joinRoom = async () => {
+    if (!currentUser || !userProfile || isJoining || isConnected) return;
+    setIsJoining(true);
+    setError('');
+    let room: Room | null = null;
+
+    try {
+      const firebaseToken = await currentUser.getIdToken();
+      const response = await fetch(TOKEN_SERVICE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + firebaseToken
+        },
+        body: JSON.stringify({ room: ROOM_ID })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.token || !payload.serverUrl) {
+        throw new Error(payload.error || 'ভয়েস রুমের নিরাপদ টোকেন পাওয়া যায়নি।');
+      }
+
+      room = new Room({ adaptiveStream: true, dynacast: true });
+      room.on(RoomEvent.TrackSubscribed, (track, _publication, _participant: RemoteParticipant) => {
+        if (track.kind === Track.Kind.Audio) {
+          const audio = track.attach() as HTMLAudioElement;
+          audio.autoplay = true;
+          audio.setAttribute('playsinline', 'true');
+          document.body.appendChild(audio);
+          audioElementsRef.current.push(audio);
+          void audio.play().catch(() => setError('অন্যদের কথা শুনতে ফোনের অডিও চালু করুন।'));
+        }
+      });
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach((element) => {
+          element.remove();
+          audioElementsRef.current = audioElementsRef.current.filter((item) => item !== element);
         });
-      })
-      .catch(() => {
-        alert("মাইক্রোফোন পারমিশন ছাড়া ভয়েস রুমে কথা বলা যাবে না।");
-        onClose();
+      });
+      room.on(RoomEvent.Disconnected, () => {
+        setIsConnected(false);
+        setIsMuted(false);
+        removeAudioElements();
       });
 
-    // ৩. রিয়েল-টাইম অন্যান্য পার্টিসিপেন্ট লিসেনার
-    const unsub = onSnapshot(collection(db, "voice_rooms", "ssc_2014_main", "participants"), (snap) => {
-      const list: Participant[] = [];
-      snap.forEach(d => list.push(d.data() as Participant));
-      setParticipants(list);
-    });
+      await room.connect(payload.serverUrl, payload.token);
+      roomRef.current = room;
+      await room.localParticipant.setMicrophoneEnabled(true);
 
-    // ৪. রুম টাইমার
-    timerRef.current = setInterval(() => setRoomDuration(d => d + 1), 1000);
+      await setDoc(doc(db, 'voice_rooms', ROOM_ID, 'participants', currentUser.uid), {
+        uid: currentUser.uid,
+        name: userProfile.fullName || userProfile.name || 'ব্যাচের বন্ধু',
+        village: userProfile.village || userProfile.area || '',
+        isMuted: false,
+        isHandRaised: false,
+        joinedAt: Date.now()
+      });
+      setIsConnected(true);
+    } catch (err) {
+      if (room) await room.disconnect().catch(() => {});
+      roomRef.current = null;
+      removeAudioElements();
+      const message = err instanceof Error ? err.message : 'সংযোগ করা যায়নি।';
+      setError(message + ' আবার চেষ্টা করুন।');
+    } finally {
+      setIsJoining(false);
+    }
+  };
 
-    // রুম থেকে বের হওয়ার সময় ক্লিনিং
-    return () => {
-      unsub();
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (cleanupStream) cleanupStream.getTracks().forEach(t => t.stop());
-      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+  const toggleMute = async () => {
+    const room = roomRef.current;
+    if (!room) return;
+    const nextMuted = !isMuted;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(!nextMuted);
+      setIsMuted(nextMuted);
       if (currentUser) {
-        deleteDoc(doc(db, "voice_rooms", "ssc_2014_main", "participants", currentUser.uid)).catch(() => {});
+        await setDoc(doc(db, 'voice_rooms', ROOM_ID, 'participants', currentUser.uid), { isMuted: nextMuted }, { merge: true });
       }
-    };
-  }, [currentUser]);
-
-  // মাইক মিউট / আনমিউট
-  const toggleMute = () => {
-    if (!currentUser || !localStreamRef.current) return;
-    const newMuted = !isMuted;
-    localStreamRef.current.getAudioTracks().forEach(track => {
-      track.enabled = !newMuted;
-    });
-    setIsMuted(newMuted);
-    setDoc(doc(db, "voice_rooms", "ssc_2014_main", "participants", currentUser.uid), {
-      isMuted: newMuted
-    }, { merge: true });
+    } catch (err) {
+      setError('মাইক্রোফোন পরিবর্তন করা যায়নি। ফোনের পারমিশন পরীক্ষা করুন।');
+    }
   };
 
-  // হাত তোলা
-  const toggleHand = () => {
+  const toggleHand = async () => {
     if (!currentUser) return;
-    const newHand = !isHandRaised;
-    setIsHandRaised(newHand);
-    setDoc(doc(db, "voice_rooms", "ssc_2014_main", "participants", currentUser.uid), {
-      isHandRaised: newHand
-    }, { merge: true });
+    const next = !isHandRaised;
+    setIsHandRaised(next);
+    await setDoc(doc(db, 'voice_rooms', ROOM_ID, 'participants', currentUser.uid), { isHandRaised: next }, { merge: true }).catch(() => setError('হাত তোলার তথ্য পাঠানো যায়নি।'));
   };
 
-  // হোস্টের ক্ষমতা: সবাইকে মিউট করা
-  const muteAllParticipants = async () => {
-    if (userProfile?.role !== 'super_admin') return;
-    if (!window.confirm("আপনি কি সবাইকে মিউট করতে চান?")) return;
-    participants.forEach(p => {
-      if (p.uid !== currentUser?.uid) {
-        setDoc(doc(db, "voice_rooms", "ssc_2014_main", "participants", p.uid), {
-          isMuted: true
-        }, { merge: true });
-      }
-    });
-  };
-
-  const formatTimer = (secs: number) => {
-    const m = Math.floor(secs / 60).toString().padStart(2, '0');
-    const s = (secs % 60).toString().padStart(2, '0');
-    return m + ":" + s;
-  };
+  const formatTimer = (seconds: number) =>
+    Math.floor(seconds / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0');
 
   return (
-    <div style={{
-      position: 'fixed',
-      inset: 0,
-      backgroundColor: '#0A2518',
-      zIndex: 1000000,
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'space-between',
-      padding: '24px 16px',
-      color: '#FFFFFF'
-    }}>
-      
-      {/* হেডার */}
-      <div style={{ textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+    <div style={{ position: 'fixed', inset: 0, backgroundColor: '#0A2518', zIndex: 1000000, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px 16px', color: '#FFFFFF' }}>
+      <div style={{ textAlign: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: 12 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', color: '#10B981', background: 'rgba(16, 185, 129, 0.2)', padding: '4px 12px', borderRadius: '14px', fontWeight: '800' }}>
-            ● লাইভ ভয়েস আড্ডা ({participants.length} জন)
+          <span style={{ fontSize: 11, color: '#10B981', background: 'rgba(16,185,129,0.2)', padding: '4px 12px', borderRadius: 14, fontWeight: 800 }}>
+            ● {isConnected ? 'লাইভ ভয়েস আড্ডা' : 'ভয়েস রুম'} ({participants.length} জন)
           </span>
-          <span style={{ fontSize: '12px', color: '#38BDF8', fontFamily: 'monospace' }}>
-            ⏱ {formatTimer(roomDuration)}
-          </span>
+          <span style={{ fontSize: 12, color: '#38BDF8', fontFamily: 'monospace' }}>⏱ {formatTimer(roomDuration)}</span>
         </div>
-        <h3 style={{ fontSize: '18px', margin: '10px 0 2px 0', fontWeight: '900', color: '#FEF08A' }}>
-          এসএসসি ২০১৪ ব্যাচ মিলনমেলা
-        </h3>
-        <p style={{ margin: 0, fontSize: '11px', color: '#94A3B8' }}>
-          সান্দিকোনা স্কুল এন্ড কলেজ
-        </p>
+        <h3 style={{ fontSize: 18, margin: '10px 0 2px', fontWeight: 900, color: '#FEF08A' }}>এসএসসি ২০১৪ ব্যাচ মিলনমেলা</h3>
+        <p style={{ margin: 0, fontSize: 11, color: '#94A3B8' }}>সান্দিকোনা স্কুল এন্ড কলেজ</p>
       </div>
 
-      {/* পার্টিসিপেন্টদের গ্রিড (স্পিকার টাইলস) */}
-      <div style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '16px 4px',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: '12px',
-        alignContent: 'start'
-      }}>
-        {participants.map((p) => {
-          const isMe = p.uid === currentUser?.uid;
-          const isSpeaking = isMe ? isSpeakingLocally : false;
+      {error && <div role="alert" style={{ background: '#7F1D1D', color: '#FEE2E2', borderRadius: 10, padding: 10, fontSize: 12, marginTop: 12 }}>{error}</div>}
 
-          return (
-            <div key={p.uid} style={{
-              background: '#06351F',
-              borderRadius: '16px',
-              padding: '12px 6px',
-              textAlign: 'center',
-              border: isSpeaking ? '2px solid #10B981' : '1px solid rgba(255,255,255,0.1)',
-              boxShadow: isSpeaking ? '0 0 16px rgba(16, 185, 129, 0.5)' : 'none',
-              transition: 'all 0.2s ease',
-              position: 'relative'
-            }}>
-              {p.isHandRaised && (
-                <span style={{ position: 'absolute', top: '4px', right: '6px', fontSize: '14px' }}>
-                  ✋
-                </span>
-              )}
-              <div style={{
-                width: '48px',
-                height: '48px',
-                borderRadius: '50%',
-                background: isSpeaking ? '#10B981' : '#116B3E',
-                color: '#FFFFFF',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 6px auto',
-                fontSize: '18px',
-                fontWeight: '800'
-              }}>
-                {p.name.charAt(0)}
-              </div>
-              <h5 style={{ margin: '0 0 2px 0', fontSize: '12px', color: '#F8FAFC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.name}
-              </h5>
-              <span style={{ fontSize: '9px', color: '#A7F3D0', display: 'block' }}>
-                {p.village || 'সহপাঠী'}
-              </span>
-              <span style={{ fontSize: '10px', marginTop: '4px', display: 'inline-block' }}>
-                {p.isMuted ? '🔇' : (isSpeaking ? '🔊' : '🎙️')}
-              </span>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 4px', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, alignContent: 'start' }}>
+        {participants.map((person) => (
+          <div key={person.uid} style={{ background: '#06351F', borderRadius: 16, padding: '12px 6px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.1)' }}>
+            {person.isHandRaised && <span style={{ display: 'block', fontSize: 16 }}>✋</span>}
+            <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#116B3E', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 6px', fontSize: 18, fontWeight: 800 }}>
+              {(person.name || 'ব').charAt(0)}
             </div>
-          );
-        })}
+            <h5 style={{ margin: '0 0 2px', fontSize: 12, color: '#F8FAFC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{person.name}</h5>
+            <span style={{ fontSize: 9, color: '#A7F3D0' }}>{person.village || 'সহপাঠী'}</span>
+            <span style={{ display: 'block', fontSize: 10, marginTop: 4 }}>{person.isMuted ? '🔇' : '🎙️'}</span>
+          </div>
+        ))}
+        {participants.length === 0 && <p style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#A7F3D0', fontSize: 13 }}>এখনো কেউ ভয়েস রুমে যোগ দেননি।</p>}
       </div>
 
-      {/* অ্যাডমিন হোস্ট কন্ট্রোল */}
-      {userProfile?.role === 'super_admin' && (
-        <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-          <button
-            onClick={muteAllParticipants}
-            style={{ background: '#D97706', color: '#FFFFFF', border: 'none', padding: '6px 14px', borderRadius: '12px', fontSize: '11px', fontWeight: '800', cursor: 'pointer' }}
-          >
-            👑 সবাইকে মিউট করুন (Host Control)
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginBottom: 12 }}>
+        {!isConnected ? (
+          <button onClick={joinRoom} disabled={isJoining} style={{ background: '#10B981', color: '#fff', border: 0, padding: '12px 22px', borderRadius: 16, fontWeight: 800, opacity: isJoining ? 0.65 : 1 }}>
+            {isJoining ? 'সংযোগ হচ্ছে…' : '🎙️ রুমে যোগ দিন'}
           </button>
-        </div>
-      )}
-
-      {/* নিচের কন্ট্রোল বার */}
-      <div style={{
-        background: '#061D13',
-        padding: '12px 16px',
-        borderRadius: '24px',
-        display: 'flex',
-        justifyContent: 'space-around',
-        alignItems: 'center',
-        border: '1px solid rgba(255,255,255,0.1)'
-      }}>
-        {/* মিউট বাটন */}
-        <button
-          onClick={toggleMute}
-          style={{
-            background: isMuted ? '#EF4444' : '#10B981',
-            color: '#FFFFFF',
-            border: 'none',
-            padding: '10px 18px',
-            borderRadius: '16px',
-            fontSize: '13px',
-            fontWeight: '800',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          <span>{isMuted ? '🔇' : '🎙️'}</span>
-          <span>{isMuted ? 'আনমিউট' : 'মিউট'}</span>
-        </button>
-
-        {/* হাত তোলা বাটন */}
-        <button
-          onClick={toggleHand}
-          style={{
-            background: isHandRaised ? '#F59E0B' : '#1E3A2F',
-            color: '#FFFFFF',
-            border: 'none',
-            padding: '10px 14px',
-            borderRadius: '16px',
-            fontSize: '13px',
-            fontWeight: '800',
-            cursor: 'pointer'
-          }}
-        >
-          ✋ হাত তুলুন
-        </button>
-
-        {/* লিভ বাটন */}
-        <button
-          onClick={onClose}
-          style={{
-            background: '#DC2626',
-            color: '#FFFFFF',
-            border: 'none',
-            padding: '10px 18px',
-            borderRadius: '16px',
-            fontSize: '13px',
-            fontWeight: '800',
-            cursor: 'pointer'
-          }}
-        >
-          🚪 লিভ
-        </button>
+        ) : (
+          <>
+            <button onClick={toggleMute} style={{ background: isMuted ? '#EF4444' : '#10B981', color: '#fff', border: 0, padding: '10px 18px', borderRadius: 16, fontSize: 13, fontWeight: 800 }}>
+              {isMuted ? '🔇 আনমিউট' : '🎙️ মিউট'}
+            </button>
+            <button onClick={toggleHand} style={{ background: isHandRaised ? '#F59E0B' : '#1E3A2F', color: '#fff', border: 0, padding: '10px 14px', borderRadius: 16, fontSize: 13, fontWeight: 800 }}>
+              ✋ {isHandRaised ? 'হাত নামান' : 'হাত তুলুন'}
+            </button>
+          </>
+        )}
+        <button onClick={async () => { await leaveRoom(); onClose(); }} style={{ background: '#DC2626', color: '#fff', border: 0, padding: '10px 18px', borderRadius: 16, fontSize: 13, fontWeight: 800 }}>🚪 লিভ</button>
       </div>
-
     </div>
   );
 }
